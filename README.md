@@ -42,7 +42,7 @@ For a containerized Phase 1 environment, run:
 docker compose up --build
 ```
 
-Before starting, ensure `.env` contains a safe `JWT_SECRET`. Prisma migrations are deliberately run as an explicit development step for now.
+Before starting, set a safe `JWT_SECRET` in `.env`. Compose waits for healthy Postgres and RabbitMQ services; the API applies checked-in migrations and seeds the sample problem at startup. The worker container will be added with the execution module.
 
 ## Implemented endpoints
 
