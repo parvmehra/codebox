@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Problem {
+  id           String     @id @default(uuid())
+  slug         String     @unique
+  title        String
+  description  String
+  difficulty   Difficulty
+  constraints  String
+  inputFormat  String
+  outputFormat String
+  examples     Json
+  isPublished  Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  testCases    TestCase[]
+
+  @@index([isPublished, difficulty])
+}
+
+model TestCase {
+  id          String   @id @default(uuid())
+  problemId   String
+  input       String
+  expectedOut String
+  isHidden    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  problem     Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([problemId])
+}

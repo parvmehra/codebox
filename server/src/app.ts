@@ -1,0 +1,13 @@
+import cors from 'cors';
+import express from 'express';
+import { env } from './config/env.js';
+import { errorHandler } from './middleware/errors.js';
+import { authRouter } from './modules/auth/routes.js';
+import { problemsRouter } from './modules/problems/routes.js';
+export const app = express();
+app.use(cors({ origin: env.CLIENT_ORIGIN }));
+app.use(express.json({ limit: '1mb' }));
+app.get('/health', (_request, response) => response.json({ status: 'ok' }));
+app.use('/api/auth', authRouter);
+app.use('/api/problems', problemsRouter);
+app.use(errorHandler);
