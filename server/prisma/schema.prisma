@@ -18,18 +18,42 @@ enum Difficulty {
   HARD
 }
 
+enum SubmissionLanguage {
+  JAVA
+  PYTHON
+  CPP
+  NODEJS
+}
+
+enum SubmissionStatus {
+  QUEUED
+  ASSIGNED
+  STARTING
+  COMPILING
+  RUNNING
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  MEMORY_LIMIT_EXCEEDED
+  COMPILATION_ERROR
+  RUNTIME_ERROR
+  SYSTEM_ERROR
+  CANCELLED
+}
+
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
+  id           String       @id @default(uuid())
+  email        String       @unique
   passwordHash String
-  role         Role     @default(USER)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  role         Role         @default(USER)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  submissions  Submission[]
 }
 
 model Problem {
-  id           String     @id @default(uuid())
-  slug         String     @unique
+  id           String       @id @default(uuid())
+  slug         String       @unique
   title        String
   description  String
   difficulty   Difficulty
@@ -37,10 +61,11 @@ model Problem {
   inputFormat  String
   outputFormat String
   examples     Json
-  isPublished  Boolean    @default(false)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  isPublished  Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
   testCases    TestCase[]
+  submissions  Submission[]
 
   @@index([isPublished, difficulty])
 }
@@ -55,4 +80,23 @@ model TestCase {
   problem     Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
 
   @@index([problemId])
+}
+
+model Submission {
+  id              String             @id @default(uuid())
+  userId          String
+  problemId       String
+  language        SubmissionLanguage
+  sourceCode      String             @db.Text
+  status          SubmissionStatus   @default(QUEUED)
+  executionTimeMs Int?
+  memoryUsedKb    Int?
+  errorMessage    String?            @db.Text
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problem         Problem            @relation(fields: [problemId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([problemId, status])
 }

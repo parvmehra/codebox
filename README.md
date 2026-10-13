@@ -1,6 +1,6 @@
 # Distributed Code Execution & Evaluation Platform
 
-Phase 1 establishes the foundation for a distributed code execution platform: a React client, a modular Express API, PostgreSQL with Prisma, JWT authentication, and problem browsing. The execution pipeline is intentionally not present yet.
+The foundation includes a React client, a modular Express API, PostgreSQL with Prisma, JWT authentication, and problem browsing. The submission record and lifecycle contract are now defined; queue delivery and code execution are the next module.
 
 ## Architecture
 
@@ -16,11 +16,11 @@ PostgreSQL is the durable source of truth. The API is a modular monolith so futu
 1. Copy `.env.example` to `.env` and replace the development secrets.
 2. Install dependencies with `npm install`.
 3. Start PostgreSQL with `docker compose up postgres -d`.
-4. Generate the Prisma client and apply the first migration:
+4. Generate the Prisma client and apply the checked-in migrations:
 
    ```bash
    npm run prisma:generate --workspace=server
-   npm run prisma:migrate --workspace=server -- --name init
+   npm run prisma:deploy --workspace=server
    ```
 
 5. Seed example problems with `npm run prisma:seed --workspace=server`.
@@ -49,10 +49,25 @@ Before starting, ensure `.env` contains a safe `JWT_SECRET`. Prisma migrations a
 | GET | `/api/problems/:id` | Get a problem without hidden tests |
 | POST | `/api/problems` | Create a problem (admin only) |
 
+## Submission lifecycle contract
+
+Submission statuses are persisted with each record. The state machine in `server/src/modules/submissions/state-machine.ts` rejects transitions that are not listed here:
+
+| Current status | Allowed next statuses |
+| --- | --- |
+| `QUEUED` | `ASSIGNED`, `CANCELLED`, `SYSTEM_ERROR` |
+| `ASSIGNED` | `STARTING`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR` |
+| `STARTING` | `COMPILING`, `RUNNING`, `CANCELLED`, `SYSTEM_ERROR` |
+| `COMPILING` | `RUNNING`, `COMPILATION_ERROR`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `CANCELLED`, `SYSTEM_ERROR` |
+| `RUNNING` | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `RUNTIME_ERROR`, `CANCELLED`, `SYSTEM_ERROR` |
+| Final outcomes | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `SYSTEM_ERROR`, `CANCELLED` have no outgoing transitions. |
+
+The `ASSIGNED → QUEUED` transition is reserved for a retry before execution starts. Each final outcome is terminal. Unit tests cover allowed and rejected transitions.
+
 ## Security note
 
-Passwords are hashed with bcrypt and protected endpoints require JWTs. This phase has no code execution capability, queues, workers, Redis, RabbitMQ, metrics, contests, or real-time updates.
+Passwords are hashed with bcrypt and protected endpoints require JWTs. Source submissions are not accepted or executed yet; RabbitMQ, workers, Redis, metrics, contests, and real-time updates are also not implemented.
 
 ## Next phase
 
-Phase 2 will add asynchronous submissions, RabbitMQ, one Java worker, and Docker-isolated evaluation.
+Next, the API will accept submissions and queue them for one Java worker, followed by Docker-isolated evaluation.
