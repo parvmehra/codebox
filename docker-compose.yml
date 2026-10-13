@@ -15,6 +15,22 @@ services:
       timeout: 5s
       retries: 10
 
+  rabbitmq:
+    image: rabbitmq:4.3.6-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-code_platform}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-change-me}
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   api:
     build:
       context: .
@@ -22,12 +38,15 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-code_platform}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-code_platform}?schema=public
       JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-before-production}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-code_platform}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672
       PORT: 4000
       CLIENT_ORIGIN: http://localhost:5173
     ports:
       - '4000:4000'
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   frontend:
@@ -41,3 +60,4 @@ services:
 
 volumes:
   postgres_data:
+  rabbitmq_data:

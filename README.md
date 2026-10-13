@@ -1,21 +1,25 @@
 # Distributed Code Execution & Evaluation Platform
 
-The foundation includes a React client, a modular Express API, PostgreSQL with Prisma, JWT authentication, and problem browsing. The submission record and lifecycle contract are now defined; queue delivery and code execution are the next module.
+The project has a React client, a modular Express API, PostgreSQL with Prisma, JWT authentication, and problem browsing. Authenticated users can now create durable submissions and enqueue them in RabbitMQ. The submission worker and code execution are the next module.
 
 ## Architecture
 
 ```text
 React + Vite  --->  Express API  --->  PostgreSQL
      :5173             :4000              :5432
+                          |
+                          v
+                    RabbitMQ queue  --->  Worker (next module)
+                       :5672
 ```
 
-PostgreSQL is the durable source of truth. The API is a modular monolith so future queue, worker, and WebSocket modules can be added without splitting services prematurely.
+PostgreSQL is the durable source of truth for users, problems, and submissions. The API publishes persistent jobs to a durable RabbitMQ queue and waits for publisher confirmation. The API remains a modular monolith; workers run as separate processes.
 
 ## Local setup
 
 1. Copy `.env.example` to `.env` and replace the development secrets.
 2. Install dependencies with `npm install`.
-3. Start PostgreSQL with `docker compose up postgres -d`.
+3. Start PostgreSQL and RabbitMQ with `docker compose up postgres rabbitmq -d`.
 4. Generate the Prisma client and apply the checked-in migrations:
 
    ```bash
@@ -27,6 +31,8 @@ PostgreSQL is the durable source of truth. The API is a modular monolith so futu
 6. Run the API and frontend with `npm run dev`.
 
 Open `http://localhost:5173`. The API health endpoint is `http://localhost:4000/health`.
+
+RabbitMQ's management UI is available at `http://localhost:15672` with the credentials in `.env` (the development defaults are `code_platform` / `change-me`).
 
 ## Docker Compose
 
@@ -48,6 +54,9 @@ Before starting, ensure `.env` contains a safe `JWT_SECRET`. Prisma migrations a
 | GET | `/api/problems` | List published problems |
 | GET | `/api/problems/:id` | Get a problem without hidden tests |
 | POST | `/api/problems` | Create a problem (admin only) |
+| POST | `/api/submissions` | Save and enqueue a submission (JWT required) |
+| GET | `/api/submissions` | List the authenticated user's submissions |
+| GET | `/api/submissions/:id` | Read one of the authenticated user's submissions |
 
 ## Submission lifecycle contract
 
@@ -66,8 +75,8 @@ The `ASSIGNED → QUEUED` transition is reserved for a retry before execution st
 
 ## Security note
 
-Passwords are hashed with bcrypt and protected endpoints require JWTs. Source submissions are not accepted or executed yet; RabbitMQ, workers, Redis, metrics, contests, and real-time updates are also not implemented.
+Passwords are hashed with bcrypt and protected endpoints require JWTs. Submissions are only queued today; no worker consumes them and no submitted code is executed. The worker will run code in Docker containers with documented resource limits. Redis, metrics, contests, and real-time updates are not implemented.
 
 ## Next phase
 
-Next, the API will accept submissions and queue them for one Java worker, followed by Docker-isolated evaluation.
+Next, add one Java worker that consumes the queue and evaluates submissions in Docker-isolated containers.
