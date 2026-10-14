@@ -60,7 +60,18 @@ export type SubmissionSummary = {
   problem: Pick<ProblemSummary, 'id' | 'slug' | 'title'>;
 };
 
+export type TestResultStatus =
+  'PASSED' | 'WRONG_ANSWER' | 'TIME_LIMIT_EXCEEDED' | 'MEMORY_LIMIT_EXCEEDED' | 'RUNTIME_ERROR';
+
+export type SubmissionTestResult = {
+  testIndex: number;
+  status: TestResultStatus;
+  executionTimeMs: number | null;
+  errorMessage: string | null;
+};
+
 export type SubmissionDetails = SubmissionSummary & {
   sourceCode: string;
   errorMessage: string | null;
+  testResults: SubmissionTestResult[];
 };

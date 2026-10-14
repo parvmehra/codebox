@@ -9,8 +9,14 @@ import { HttpError } from '../../utils/http-error.js';
 
 const createSubmissionInput = z.object({
   problemId: z.string().uuid(),
-  language: z.nativeEnum(SubmissionLanguage),
-  sourceCode: z.string().min(1).max(100_000),
+  language: z.literal(SubmissionLanguage.JAVA),
+  sourceCode: z
+    .string()
+    .min(1)
+    .max(100_000)
+    .refine((sourceCode) => Buffer.byteLength(sourceCode, 'utf8') <= 100_000, {
+      message: 'Source code must not exceed 100,000 UTF-8 bytes.',
+    }),
 });
 
 const historyQuery = z.object({
@@ -46,13 +52,17 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
     assertSubmissionTransition(SubmissionStatus.QUEUED, SubmissionStatus.SYSTEM_ERROR);
     await prisma.submission.updateMany({
       where: { id: submission.id, status: SubmissionStatus.QUEUED },
-      data: { status: SubmissionStatus.SYSTEM_ERROR, errorMessage: 'The submission could not be queued.' },
+      data: {
+        status: SubmissionStatus.SYSTEM_ERROR,
+        errorMessage: 'The submission could not be queued.',
+      },
     });
 
     return response.status(503).json({
       error: {
         code: 'QUEUE_UNAVAILABLE',
-        message: 'The submission was saved but could not be queued. Check its status before retrying.',
+        message:
+          'The submission was saved but could not be queued. Check its status before retrying.',
       },
       submissionId: submission.id,
     });
@@ -104,9 +114,20 @@ submissionsRouter.get('/:id', requireAuth, async (request: AuthenticatedRequest,
       createdAt: true,
       updatedAt: true,
       problem: { select: { id: true, slug: true, title: true } },
+      executions: {
+        orderBy: { attemptNumber: 'desc' },
+        take: 1,
+        select: {
+          testResults: {
+            orderBy: { testIndex: 'asc' },
+            select: { testIndex: true, status: true, executionTimeMs: true, errorMessage: true },
+          },
+        },
+      },
     },
   });
 
   if (!submission) throw new HttpError(404, 'SUBMISSION_NOT_FOUND', 'Submission not found.');
-  return response.json({ data: submission });
+  const { executions, ...details } = submission;
+  return response.json({ data: { ...details, testResults: executions[0]?.testResults ?? [] } });
 });

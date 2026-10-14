@@ -2,9 +2,12 @@
   "name": "code-execution-platform",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["server", "frontend"],
+  "workspaces": [
+    "server",
+    "frontend"
+  ],
   "scripts": {
-    "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=frontend\"",
+    "dev": "concurrently \"npm run dev --workspace=server\" \"npm run worker:dev --workspace=server\" \"npm run dev --workspace=frontend\"",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
     "format": "prettier --write .",

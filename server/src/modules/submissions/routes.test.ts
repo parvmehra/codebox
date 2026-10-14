@@ -115,4 +115,55 @@ describe('submission API', () => {
     expect(response.status).toBe(401);
     expect(prisma.problem.findFirst).not.toHaveBeenCalled();
   });
+
+  it('rejects languages that do not have an execution profile yet', async () => {
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ problemId, language: 'PYTHON', sourceCode: 'print(1)' }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+    expect(prisma.problem.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('returns per-test verdicts without exposing test inputs or expected outputs', async () => {
+    vi.mocked(prisma.submission.findFirst).mockResolvedValue({
+      id: submissionId,
+      language: 'JAVA',
+      sourceCode: 'public class Main {}',
+      status: SubmissionStatus.ACCEPTED,
+      executionTimeMs: 12,
+      memoryUsedKb: null,
+      errorMessage: null,
+      createdAt: new Date('2026-10-13T00:00:00.000Z'),
+      updatedAt: new Date('2026-10-13T00:00:01.000Z'),
+      problem: { id: problemId, slug: 'sample', title: 'Sample' },
+      executions: [
+        {
+          testResults: [
+            {
+              testIndex: 1,
+              status: 'PASSED',
+              executionTimeMs: 12,
+              errorMessage: null,
+            },
+          ],
+        },
+      ],
+    } as never);
+
+    const response = await fetch(`${baseUrl}/api/submissions/${submissionId}`, {
+      headers: authHeaders(),
+    });
+    const body = (await response.json()) as { data: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(body.data.testResults).toEqual([
+      { testIndex: 1, status: 'PASSED', executionTimeMs: 12, errorMessage: null },
+    ]);
+    expect(body.data).not.toHaveProperty('input');
+    expect(body.data).not.toHaveProperty('expectedOut');
+  });
 });

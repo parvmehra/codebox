@@ -12,6 +12,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -30,4 +31,14 @@ jobs:
       - run: npm run test --workspace=@platform/server
       - run: npm run build
       - name: Build application containers
-        run: docker compose build api frontend
+        run: docker compose build api worker frontend
+
+      - name: Start worker integration stack
+        run: docker compose up -d postgres rabbitmq api worker
+
+      - name: Verify the Java worker flow
+        run: node scripts/worker-e2e.mjs
+
+      - name: Stop integration stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

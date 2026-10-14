@@ -47,7 +47,9 @@ export function SubmissionDetailsPage() {
     return (
       <section className="page-state">
         <p>Log in to view this submission.</p>
-        <Link className="button" to="/login">Log in</Link>
+        <Link className="button" to="/login">
+          Log in
+        </Link>
       </section>
     );
   }
@@ -56,12 +58,16 @@ export function SubmissionDetailsPage() {
 
   return (
     <section className="submission-detail-page">
-      <Link className="text-link" to="/submissions">← My submissions</Link>
+      <Link className="text-link" to="/submissions">
+        ← My submissions
+      </Link>
       <div className="submission-detail-heading">
         <div>
           <p className="eyebrow">SUBMISSION</p>
           <h1>{data.problem.title}</h1>
-          <p className="submission-meta">{data.language} · {new Date(data.createdAt).toLocaleString()}</p>
+          <p className="submission-meta">
+            {data.language} · {new Date(data.createdAt).toLocaleString()}
+          </p>
         </div>
         <span className={`status-badge ${data.status.toLowerCase().replaceAll('_', '-')}`}>
           {data.status.replaceAll('_', ' ')}
@@ -78,6 +84,25 @@ export function SubmissionDetailsPage() {
           Runtime: {data.executionTimeMs} ms
           {data.memoryUsedKb !== null && ` · Memory: ${data.memoryUsedKb} KB`}
         </p>
+      )}
+      {data.testResults.length > 0 && (
+        <section className="test-results">
+          <h2>Test results</h2>
+          <div className="test-results-list">
+            {data.testResults.map((result) => (
+              <div className="test-result-row" key={result.testIndex}>
+                <span>Test {result.testIndex}</span>
+                <span
+                  className={`test-result-status ${result.status.toLowerCase().replaceAll('_', '-')}`}
+                >
+                  {result.status.replaceAll('_', ' ')}
+                </span>
+                {result.executionTimeMs !== null && <span>{result.executionTimeMs} ms</span>}
+                {result.errorMessage && <p>{result.errorMessage}</p>}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
       <section className="source-panel">
         <h2>Submitted source</h2>

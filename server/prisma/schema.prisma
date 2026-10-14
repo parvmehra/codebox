@@ -41,6 +41,14 @@ enum SubmissionStatus {
   CANCELLED
 }
 
+enum TestResultStatus {
+  PASSED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  MEMORY_LIMIT_EXCEEDED
+  RUNTIME_ERROR
+}
+
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
@@ -71,13 +79,14 @@ model Problem {
 }
 
 model TestCase {
-  id          String   @id @default(uuid())
-  problemId   String
-  input       String
-  expectedOut String
-  isHidden    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  problem     Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  id               String                @id @default(uuid())
+  problemId        String
+  input            String
+  expectedOut      String
+  isHidden         Boolean               @default(true)
+  createdAt        DateTime              @default(now())
+  problem          Problem               @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  executionResults ExecutionTestResult[]
 
   @@index([problemId])
 }
@@ -96,7 +105,42 @@ model Submission {
   updatedAt       DateTime           @updatedAt
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   problem         Problem            @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  executions      Execution[]
 
   @@index([userId, createdAt])
   @@index([problemId, status])
+}
+
+model Execution {
+  id              String                @id @default(uuid())
+  submissionId    String
+  attemptNumber   Int                   @default(1)
+  languageVersion String
+  dockerImage     String
+  timeLimitMs     Int
+  memoryLimitMb   Int
+  startedAt       DateTime              @default(now())
+  completedAt     DateTime?
+  executionTimeMs Int?
+  memoryUsedKb    Int?
+  submission      Submission            @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testResults     ExecutionTestResult[]
+
+  @@unique([submissionId, attemptNumber])
+  @@index([submissionId, startedAt])
+}
+
+model ExecutionTestResult {
+  id              String           @id @default(uuid())
+  executionId     String
+  testCaseId      String?
+  testIndex       Int
+  status          TestResultStatus
+  executionTimeMs Int?
+  errorMessage    String?          @db.Text
+  execution       Execution        @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  testCase        TestCase?        @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+
+  @@unique([executionId, testIndex])
+  @@index([testCaseId])
 }

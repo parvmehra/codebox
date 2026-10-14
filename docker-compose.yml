@@ -49,6 +49,27 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: server/Dockerfile.worker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-code_platform}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-code_platform}?schema=public
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-code_platform}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_started
+    stop_grace_period: 30s
+    restart: unless-stopped
+
   frontend:
     build:
       context: .

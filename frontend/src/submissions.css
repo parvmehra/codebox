@@ -279,6 +279,64 @@
   line-height: 1.6;
 }
 
+.test-results {
+  margin-top: 26px;
+}
+
+.test-results h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.test-results-list {
+  border: 1px solid #303747;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.test-result-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 13px;
+  border-bottom: 1px solid #303747;
+  color: #c8cedc;
+  font-size: 12px;
+}
+
+.test-result-row:last-child {
+  border-bottom: 0;
+}
+
+.test-result-row p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #ffacb7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.test-result-status {
+  font:
+    11px 'DM Mono',
+    monospace;
+}
+
+.test-result-status.passed {
+  color: #75d7b9;
+}
+
+.test-result-status.wrong-answer,
+.test-result-status.runtime-error {
+  color: #f29aa9;
+}
+
+.test-result-status.time-limit-exceeded,
+.test-result-status.memory-limit-exceeded {
+  color: #f2c36d;
+}
+
 .source-panel {
   margin-top: 30px;
 }
