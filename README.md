@@ -1,6 +1,6 @@
 # Distributed Code Execution & Evaluation Platform
 
-The project has a React client, a modular Express API, PostgreSQL with Prisma, JWT authentication, and problem browsing. Authenticated users can now create durable submissions and enqueue them in RabbitMQ. The submission worker and code execution are the next module.
+The project has a React client with a Monaco code editor, a modular Express API, PostgreSQL with Prisma, JWT authentication, and problem browsing. Authenticated users can now create durable submissions and enqueue them in RabbitMQ. The submission worker and code execution are the next module.
 
 ## Architecture
 
@@ -44,31 +44,35 @@ docker compose up --build
 
 Before starting, set a safe `JWT_SECRET` in `.env`. Compose waits for healthy Postgres and RabbitMQ services; the API applies checked-in migrations and seeds the sample problem at startup. The worker container will be added with the execution module.
 
+## Continuous integration
+
+GitHub Actions runs linting, TypeScript checks, server tests, application builds, and Docker image builds for the API and frontend on pushes to `main` and pull requests.
+
 ## Implemented endpoints
 
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| POST | `/api/auth/register` | Register a user |
-| POST | `/api/auth/login` | Log in and receive a JWT |
-| GET | `/api/auth/me` | Return the authenticated user |
-| GET | `/api/problems` | List published problems |
-| GET | `/api/problems/:id` | Get a problem without hidden tests |
-| POST | `/api/problems` | Create a problem (admin only) |
-| POST | `/api/submissions` | Save and enqueue a submission (JWT required) |
-| GET | `/api/submissions` | List the authenticated user's submissions |
-| GET | `/api/submissions/:id` | Read one of the authenticated user's submissions |
+| Method | Endpoint               | Purpose                                          |
+| ------ | ---------------------- | ------------------------------------------------ |
+| POST   | `/api/auth/register`   | Register a user                                  |
+| POST   | `/api/auth/login`      | Log in and receive a JWT                         |
+| GET    | `/api/auth/me`         | Return the authenticated user                    |
+| GET    | `/api/problems`        | List published problems                          |
+| GET    | `/api/problems/:id`    | Get a problem without hidden tests               |
+| POST   | `/api/problems`        | Create a problem (admin only)                    |
+| POST   | `/api/submissions`     | Save and enqueue a submission (JWT required)     |
+| GET    | `/api/submissions`     | List the authenticated user's submissions        |
+| GET    | `/api/submissions/:id` | Read one of the authenticated user's submissions |
 
 ## Submission lifecycle contract
 
 Submission statuses are persisted with each record. The state machine in `server/src/modules/submissions/state-machine.ts` rejects transitions that are not listed here:
 
-| Current status | Allowed next statuses |
-| --- | --- |
-| `QUEUED` | `ASSIGNED`, `CANCELLED`, `SYSTEM_ERROR` |
-| `ASSIGNED` | `STARTING`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR` |
-| `STARTING` | `COMPILING`, `RUNNING`, `CANCELLED`, `SYSTEM_ERROR` |
-| `COMPILING` | `RUNNING`, `COMPILATION_ERROR`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `CANCELLED`, `SYSTEM_ERROR` |
-| `RUNNING` | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `RUNTIME_ERROR`, `CANCELLED`, `SYSTEM_ERROR` |
+| Current status | Allowed next statuses                                                                                                                                                       |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QUEUED`       | `ASSIGNED`, `CANCELLED`, `SYSTEM_ERROR`                                                                                                                                     |
+| `ASSIGNED`     | `STARTING`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR`                                                                                                                   |
+| `STARTING`     | `COMPILING`, `RUNNING`, `CANCELLED`, `SYSTEM_ERROR`                                                                                                                         |
+| `COMPILING`    | `RUNNING`, `COMPILATION_ERROR`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `CANCELLED`, `SYSTEM_ERROR`                                                                 |
+| `RUNNING`      | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `RUNTIME_ERROR`, `CANCELLED`, `SYSTEM_ERROR`                                                    |
 | Final outcomes | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `SYSTEM_ERROR`, `CANCELLED` have no outgoing transitions. |
 
 The `ASSIGNED → QUEUED` transition is reserved for a retry before execution starts. Each final outcome is terminal. Unit tests cover allowed and rejected transitions.

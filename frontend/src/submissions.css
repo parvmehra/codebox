@@ -55,7 +55,9 @@
 
 .editor-language {
   color: #8e98ad;
-  font: 11px 'DM Mono', monospace;
+  font:
+    11px 'DM Mono',
+    monospace;
 }
 
 .submission-form {
@@ -78,20 +80,15 @@
 }
 
 .code-editor {
-  display: block;
   width: 100%;
-  min-height: 390px;
-  resize: vertical;
+  height: 420px;
+  overflow: hidden;
   border: 1px solid #303747;
   border-radius: 6px;
   background: #10131b;
-  color: #d8e0f2;
-  padding: 15px;
-  tab-size: 4;
-  font: 12px/1.65 'DM Mono', monospace;
 }
 
-.code-editor:focus,
+.code-editor:focus-within,
 .language-picker select:focus {
   outline: 2px solid #718fe8;
   outline-offset: 1px;
@@ -163,7 +160,9 @@
 
 .submission-row p {
   margin: 0;
-  font: 11px 'DM Mono', monospace;
+  font:
+    11px 'DM Mono',
+    monospace;
 }
 
 .status-badge {
@@ -175,7 +174,9 @@
   background: #202a3d;
   color: #b7c5ea;
   padding: 6px 8px;
-  font: 10px 'DM Mono', monospace;
+  font:
+    10px 'DM Mono',
+    monospace;
   letter-spacing: 0.2px;
 }
 
@@ -317,8 +318,7 @@
   }
 
   .code-editor {
-    min-height: 300px;
-    padding: 12px;
+    height: 320px;
   }
 
   .submission-detail-heading {

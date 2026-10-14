@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate --workspace=@platform/server
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test --workspace=@platform/server
+      - run: npm run build
+      - name: Build application containers
+        run: docker compose build api frontend

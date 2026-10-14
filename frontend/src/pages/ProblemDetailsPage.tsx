@@ -2,6 +2,7 @@ import axios from 'axios';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import Editor from '@monaco-editor/react';
 import { api, type Problem, type QueuedSubmission, type SubmissionLanguage } from '../services/api';
 
 const starterCode: Record<SubmissionLanguage, string> = {
@@ -35,6 +36,13 @@ console.log(input.trim());`,
 };
 
 type SubmissionApiError = { error?: { message?: string }; submissionId?: string };
+
+const monacoLanguage: Record<SubmissionLanguage, string> = {
+  JAVA: 'java',
+  PYTHON: 'python',
+  CPP: 'cpp',
+  NODEJS: 'javascript',
+};
 
 export function ProblemDetailsPage() {
   const { id } = useParams();
@@ -72,13 +80,17 @@ export function ProblemDetailsPage() {
   }
 
   function changeLanguage(nextLanguage: SubmissionLanguage) {
-    setSourceCode((current) => (current === starterCode[language] ? starterCode[nextLanguage] : current));
+    setSourceCode((current) =>
+      current === starterCode[language] ? starterCode[nextLanguage] : current,
+    );
     setLanguage(nextLanguage);
   }
 
   return (
     <section className="problem-detail">
-      <Link className="text-link" to="/problems">← All problems</Link>
+      <Link className="text-link" to="/problems">
+        ← All problems
+      </Link>
       <div className="detail-title">
         <div>
           <span className={`badge ${data.difficulty.toLowerCase()}`}>{data.difficulty}</span>
@@ -128,20 +140,35 @@ export function ProblemDetailsPage() {
                   <option value="NODEJS">Node.js 22</option>
                 </select>
               </label>
-              <textarea
-                className="code-editor"
-                aria-label="Source code"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                value={sourceCode}
-                onChange={(event) => setSourceCode(event.target.value)}
-              />
+              <div className="code-editor min-w-0" role="region" aria-label="Source code editor">
+                <Editor
+                  height="100%"
+                  language={monacoLanguage[language]}
+                  value={sourceCode}
+                  onChange={(value) => setSourceCode(value ?? '')}
+                  theme="vs-dark"
+                  loading="Loading editor…"
+                  options={{
+                    automaticLayout: true,
+                    fontSize: 13,
+                    insertSpaces: true,
+                    lineNumbers: 'on',
+                    minimap: { enabled: false },
+                    padding: { top: 12, bottom: 12 },
+                    scrollBeyondLastLine: false,
+                    tabSize: 4,
+                    wordWrap: 'on',
+                  }}
+                />
+              </div>
               {submit.isError && (
                 <p className="error submit-error">
                   {errorBody?.error?.message ?? 'Could not submit this solution. Please try again.'}
                   {errorBody?.submissionId && (
-                    <> <Link to={`/submissions/${errorBody.submissionId}`}>View its status</Link>.</>
+                    <>
+                      {' '}
+                      <Link to={`/submissions/${errorBody.submissionId}`}>View its status</Link>.
+                    </>
                   )}
                 </p>
               )}
@@ -155,7 +182,9 @@ export function ProblemDetailsPage() {
           ) : (
             <div className="auth-notice">
               <p>Log in to submit a solution and follow its status.</p>
-              <Link className="button" to="/login">Log in to submit</Link>
+              <Link className="button" to="/login">
+                Log in to submit
+              </Link>
             </div>
           )}
         </aside>
