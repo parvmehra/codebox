@@ -1,8 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { SubmissionStatus, TestResultStatus } from '@prisma/client';
 import { JAVA_21_PROFILE, type LanguageProfile, withTimeout } from './language-profile.js';
@@ -141,13 +138,10 @@ export async function executeJavaSubmission(
     throw new SourceSizeLimitError();
   }
 
-  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'codebox-execution-'));
-  const sourcePath = join(temporaryDirectory, profile.sourceFileName);
   const containerName = `codebox-exec-${randomUUID()}`;
   let containerId: string | undefined;
 
   try {
-    await writeFile(sourcePath, options.sourceCode, { encoding: 'utf8', mode: 0o644 });
     const create = await runDocker(buildSandboxCreateArgs(containerName, profile), {
       timeoutMs: 30_000,
     });
@@ -159,13 +153,11 @@ export async function executeJavaSubmission(
     const start = await runDocker(['start', containerId], { timeoutMs: 30_000 });
     requireDockerSuccess(start, 'start isolated execution container');
 
-    const copy = await runDocker(
-      ['cp', sourcePath, `${containerId}:/workspace/${profile.sourceFileName}`],
-      {
-        timeoutMs: 30_000,
-      },
+    const writeSource = await runDocker(
+      ['exec', '-i', containerId, 'sh', '-c', `cat > /workspace/${profile.sourceFileName}`],
+      { input: options.sourceCode, timeoutMs: 30_000 },
     );
-    requireDockerSuccess(copy, 'copy source into isolated execution container');
+    requireDockerSuccess(writeSource, 'write source into isolated execution container');
 
     await options.onPhase(SubmissionStatus.COMPILING);
     const compile = await runDocker(
@@ -274,8 +266,6 @@ export async function executeJavaSubmission(
       }
     } catch (error) {
       console.error({ containerId, error }, 'Could not clean up execution container');
-    } finally {
-      await rm(temporaryDirectory, { recursive: true, force: true });
     }
   }
 }
