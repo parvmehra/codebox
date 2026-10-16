@@ -1,6 +1,6 @@
 import amqp from 'amqplib';
 import type { ChannelModel, ConfirmChannel } from 'amqplib';
-import { env } from '../config/env.js';
+import { runtimeEnv } from '../config/runtime-env.js';
 
 export const SUBMISSION_QUEUE = 'submissions.execute';
 
@@ -9,7 +9,7 @@ let channel: ConfirmChannel | undefined;
 let channelPromise: Promise<ConfirmChannel> | undefined;
 
 async function createChannel(): Promise<ConfirmChannel> {
-  const nextConnection = await amqp.connect(env.RABBITMQ_URL);
+  const nextConnection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
 
   try {
     const nextChannel = await nextConnection.createConfirmChannel();

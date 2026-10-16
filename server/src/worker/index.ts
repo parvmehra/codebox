@@ -1,6 +1,6 @@
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
 import { z } from 'zod';
-import { env } from '../config/env.js';
+import { runtimeEnv } from '../config/runtime-env.js';
 import { prisma } from '../database/prisma.js';
 import { SUBMISSION_QUEUE } from '../queue/submissions.js';
 import { ensureJavaImage } from './docker-executor.js';
@@ -16,7 +16,7 @@ const activeMessages = new Set<Promise<void>>();
 
 async function startWorker(): Promise<void> {
   await ensureJavaImage();
-  connection = await amqp.connect(env.RABBITMQ_URL);
+  connection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
   channel = await connection.createChannel();
   await channel.assertQueue(SUBMISSION_QUEUE, { durable: true });
   await channel.prefetch(1);
