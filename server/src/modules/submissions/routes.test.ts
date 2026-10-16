@@ -116,11 +116,36 @@ describe('submission API', () => {
     expect(prisma.problem.findFirst).not.toHaveBeenCalled();
   });
 
-  it('rejects languages that do not have an execution profile yet', async () => {
+  it('accepts each supported execution language', async () => {
+    vi.mocked(prisma.problem.findFirst).mockResolvedValue({ id: problemId } as never);
+    vi.mocked(prisma.submission.create).mockImplementation((async ({
+      data,
+    }: Parameters<typeof prisma.submission.create>[0]) => ({
+      id: submissionId,
+      status: SubmissionStatus.QUEUED,
+      language: data.language,
+      createdAt: new Date('2026-10-13T00:00:00.000Z'),
+    })) as never);
+    vi.mocked(publishSubmission).mockResolvedValue(undefined);
+
+    for (const language of ['JAVA', 'PYTHON', 'CPP', 'NODEJS'] as const) {
+      const response = await fetch(`${baseUrl}/api/submissions`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ problemId, language, sourceCode: 'print(1)' }),
+      });
+
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ data: { language } });
+    }
+    expect(publishSubmission).toHaveBeenCalledTimes(4);
+  });
+
+  it('rejects language values outside the supported enum', async () => {
     const response = await fetch(`${baseUrl}/api/submissions`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ problemId, language: 'PYTHON', sourceCode: 'print(1)' }),
+      body: JSON.stringify({ problemId, language: 'RUST', sourceCode: 'fn main() {}' }),
     });
 
     expect(response.status).toBe(400);

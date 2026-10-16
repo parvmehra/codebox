@@ -75,7 +75,10 @@ const { data: problems } = await request('/problems');
 const problem = problems.find((candidate) => candidate.slug === 'two-sum');
 assert.ok(problem, 'The seed problem "two-sum" must be available.');
 
-const sourceCode = `import java.util.*;
+const solutions = [
+  {
+    language: 'JAVA',
+    sourceCode: `import java.util.*;
 
 public class Main {
     public static void main(String[] args) {
@@ -93,23 +96,89 @@ public class Main {
             }
         }
     }
-}`;
+}`,
+  },
+  {
+    language: 'PYTHON',
+    sourceCode: `import sys
 
-const queued = await request('/submissions', {
-  method: 'POST',
-  token,
-  body: JSON.stringify({ problemId: problem.id, language: 'JAVA', sourceCode }),
-});
-assert.equal(queued.data.status, 'QUEUED');
+values = list(map(int, sys.stdin.read().split()))
+count = values[0]
+numbers = values[1:count + 1]
+target = values[count + 1]
 
-const result = await waitForSubmission(queued.data.id, token);
-assert.equal(result.status, 'ACCEPTED', `Unexpected final result: ${JSON.stringify(result)}`);
-assert.deepEqual(
-  result.testResults.map(({ status }) => status),
-  ['PASSED'],
-  'The worker should persist a passing verdict for the seeded test case.',
-);
-assert.equal(Object.hasOwn(result.testResults[0], 'input'), false);
-assert.equal(Object.hasOwn(result.testResults[0], 'expectedOut'), false);
+for i in range(count):
+    for j in range(i + 1, count):
+        if numbers[i] + numbers[j] == target:
+            print(i, j)
+            raise SystemExit
+`,
+  },
+  {
+    language: 'CPP',
+    sourceCode: `#include <bits/stdc++.h>
+using namespace std;
 
-console.info('Worker end-to-end flow passed: submission queued, executed, and result persisted.');
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int count;
+    cin >> count;
+    vector<int> numbers(count);
+    for (int& number : numbers) cin >> number;
+    int target;
+    cin >> target;
+    for (int i = 0; i < count; ++i) {
+        for (int j = i + 1; j < count; ++j) {
+            if (numbers[i] + numbers[j] == target) {
+                cout << i << " " << j << "\\n";
+                return 0;
+            }
+        }
+    }
+}`,
+  },
+  {
+    language: 'NODEJS',
+    sourceCode: `const fs = require('node:fs');
+const values = fs.readFileSync(0, 'utf8').trim().split(/\\s+/).map(Number);
+const count = values[0];
+const numbers = values.slice(1, count + 1);
+const target = values[count + 1];
+
+for (let i = 0; i < count; i++) {
+  for (let j = i + 1; j < count; j++) {
+    if (numbers[i] + numbers[j] === target) {
+      console.log(i, j);
+      process.exit(0);
+    }
+  }
+}`,
+  },
+];
+
+for (const { language, sourceCode } of solutions) {
+  const queued = await request('/submissions', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ problemId: problem.id, language, sourceCode }),
+  });
+  assert.equal(queued.data.status, 'QUEUED');
+
+  const result = await waitForSubmission(queued.data.id, token);
+  assert.equal(
+    result.status,
+    'ACCEPTED',
+    'Unexpected final result for ' + language + ': ' + JSON.stringify(result),
+  );
+  assert.deepEqual(
+    result.testResults.map(({ status }) => status),
+    ['PASSED'],
+    'The ' + language + ' worker should persist a passing verdict for the seeded test case.',
+  );
+  assert.equal(Object.hasOwn(result.testResults[0], 'input'), false);
+  assert.equal(Object.hasOwn(result.testResults[0], 'expectedOut'), false);
+}
+
+console.info('Worker end-to-end flow passed for Java, Python, C++, and Node.js.');

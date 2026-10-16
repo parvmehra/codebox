@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   executionCreate: vi.fn(),
   executionUpdate: vi.fn(),
   testResultCreate: vi.fn(),
-  executeJavaSubmission: vi.fn(),
+  executeSubmission: vi.fn(),
 }));
 
 vi.doMock('../database/prisma.js', () => ({
@@ -25,7 +25,7 @@ vi.doMock('../database/prisma.js', () => ({
 }));
 
 vi.doMock('./docker-executor.js', () => ({
-  executeJavaSubmission: mocks.executeJavaSubmission,
+  executeSubmission: mocks.executeSubmission,
   SourceSizeLimitError: class SourceSizeLimitError extends Error {},
 }));
 
@@ -46,7 +46,7 @@ beforeEach(() => {
   mocks.executionCreate.mockResolvedValue({ id: executionId });
   mocks.executionUpdate.mockResolvedValue({});
   mocks.testResultCreate.mockResolvedValue({});
-  mocks.executeJavaSubmission.mockImplementation(async ({ onPhase, onTestResult }) => {
+  mocks.executeSubmission.mockImplementation(async (_profile, { onPhase, onTestResult }) => {
     await onPhase(SubmissionStatus.COMPILING);
     await onPhase(SubmissionStatus.RUNNING);
     await onTestResult({
@@ -86,6 +86,10 @@ describe('submission worker processor', () => {
       }),
       select: { id: true },
     });
+    expect(mocks.executeSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ language: SubmissionLanguage.JAVA }),
+      expect.objectContaining({ sourceCode: 'public class Main {}' }),
+    );
     expect(mocks.testResultCreate).toHaveBeenCalledWith({
       data: {
         executionId,
@@ -99,7 +103,7 @@ describe('submission worker processor', () => {
   });
 
   it('marks Docker or persistence failures as system errors without exposing details', async () => {
-    mocks.executeJavaSubmission.mockRejectedValue(new Error('private daemon address'));
+    mocks.executeSubmission.mockRejectedValue(new Error('private daemon address'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const result = await processSubmission(submissionId);
@@ -119,7 +123,7 @@ describe('submission worker processor', () => {
   });
 
   it('persists compiler diagnostics as a terminal compilation error', async () => {
-    mocks.executeJavaSubmission.mockImplementation(async ({ onPhase }) => {
+    mocks.executeSubmission.mockImplementation(async (_profile, { onPhase }) => {
       await onPhase(SubmissionStatus.COMPILING);
       return {
         status: SubmissionStatus.COMPILATION_ERROR,
@@ -155,6 +159,6 @@ describe('submission worker processor', () => {
 
     expect(result).toEqual({ processed: false, status: SubmissionStatus.ACCEPTED });
     expect(mocks.executionCreate).not.toHaveBeenCalled();
-    expect(mocks.executeJavaSubmission).not.toHaveBeenCalled();
+    expect(mocks.executeSubmission).not.toHaveBeenCalled();
   });
 });

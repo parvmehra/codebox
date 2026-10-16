@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { runtimeEnv } from '../config/runtime-env.js';
 import { prisma } from '../database/prisma.js';
 import { SUBMISSION_QUEUE } from '../queue/submissions.js';
-import { ensureJavaImage } from './docker-executor.js';
+import { ensureLanguageImages } from './docker-executor.js';
 import { processSubmission } from './processor.js';
 
 const submissionJob = z.object({ submissionId: z.string().uuid() });
@@ -15,7 +15,7 @@ let isShuttingDown = false;
 const activeMessages = new Set<Promise<void>>();
 
 async function startWorker(): Promise<void> {
-  await ensureJavaImage();
+  await ensureLanguageImages();
   connection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
   channel = await connection.createChannel();
   await channel.assertQueue(SUBMISSION_QUEUE, { durable: true });
@@ -47,7 +47,7 @@ async function startWorker(): Promise<void> {
     { noAck: false },
   );
   consumerTag = consumer.consumerTag;
-  console.info({ queue: SUBMISSION_QUEUE, consumerTag }, 'Java 21 submission worker is ready');
+  console.info({ queue: SUBMISSION_QUEUE, consumerTag }, 'Submission worker is ready');
 }
 
 async function handleMessage(message: ConsumeMessage): Promise<void> {
@@ -104,7 +104,7 @@ process.once('SIGINT', () => void shutdown('SIGINT'));
 process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 void startWorker().catch(async (error: unknown) => {
-  console.error({ error }, 'Could not start Java 21 submission worker');
+  console.error({ error }, 'Could not start submission worker');
   process.exitCode = 1;
   await connection?.close().catch(() => undefined);
   await prisma.$disconnect().catch(() => undefined);

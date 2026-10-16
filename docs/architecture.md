@@ -1,6 +1,6 @@
 # Architecture
 
-The platform uses a modular monolith API and a separate worker process. PostgreSQL stores durable application and execution data. RabbitMQ transports execution jobs. Docker creates a short-lived Java container for each submission.
+The platform uses a modular monolith API and a separate worker process. PostgreSQL stores durable application and execution data. RabbitMQ transports execution jobs. Docker creates a short-lived language-specific container for each submission.
 
 ```text
 React + Vite
@@ -10,7 +10,7 @@ Express API ───────► PostgreSQL
     │                 ▲
     │ durable job     │ execution and test results
     ▼                 │
-RabbitMQ ───────► Java worker ───────► temporary Docker container
+RabbitMQ ───────► Worker ────────────► temporary language container
 ```
 
 ## Responsibilities
@@ -19,15 +19,15 @@ RabbitMQ ───────► Java worker ───────► temporary
 - **API:** authentication, problem access, submission validation, persistence, and RabbitMQ publishing. It never executes submitted code.
 - **PostgreSQL:** source of truth for users, problems, test cases, submissions, executions, and per-test results.
 - **RabbitMQ:** durable asynchronous delivery from the API to workers.
-- **Worker:** validates and claims a queued submission, selects a language profile, runs the Java compiler and program in Docker, and persists the result.
+- **Worker:** validates and claims a queued submission, selects a language profile, compiles or syntax-checks and runs the program in Docker, and persists the result.
 - **Execution container:** receives only the submitted source file and test input. It has no network or host path mounts and does not receive the Docker socket.
 
 ## Data flow
 
-1. An authenticated user sends Java source to `POST /api/submissions`.
+1. An authenticated user sends source for one of the four supported languages to `POST /api/submissions`.
 2. The API validates the problem and source size, writes a `QUEUED` submission, then publishes a persistent RabbitMQ message and waits for publisher confirmation.
 3. A worker claims the queued row with a conditional database update and advances it through the state machine.
-4. The worker creates an `Execution` record, compiles the source, and runs test cases in order.
+4. The worker creates an `Execution` record, runs that profile's compile or syntax-check command, and evaluates test cases in order.
 5. Each test verdict is stored without persisting its input or expected output in the result row.
 6. The worker stores the final status and acknowledges the message.
 7. The frontend polls the submission endpoint until it reaches a terminal state.

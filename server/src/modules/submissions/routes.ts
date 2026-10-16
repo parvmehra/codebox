@@ -9,7 +9,7 @@ import { HttpError } from '../../utils/http-error.js';
 
 const createSubmissionInput = z.object({
   problemId: z.string().uuid(),
-  language: z.literal(SubmissionLanguage.JAVA),
+  language: z.nativeEnum(SubmissionLanguage),
   sourceCode: z
     .string()
     .min(1)

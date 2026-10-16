@@ -5,22 +5,56 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { api, type Problem, type QueuedSubmission, type SubmissionLanguage } from '../services/api';
 
-const language: SubmissionLanguage = 'JAVA';
-const starterCode = `import java.util.*;
+const languageOptions: { value: SubmissionLanguage; label: string; editorLanguage: string }[] = [
+  { value: 'JAVA', label: 'Java 21', editorLanguage: 'java' },
+  { value: 'PYTHON', label: 'Python 3.12', editorLanguage: 'python' },
+  { value: 'CPP', label: 'C++23', editorLanguage: 'cpp' },
+  { value: 'NODEJS', label: 'Node.js 22', editorLanguage: 'javascript' },
+];
+
+const starterCode: Record<SubmissionLanguage, string> = {
+  JAVA: `import java.util.*;
 
 public class Main {
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
         // Read input and print your answer.
     }
-}`;
+}`,
+  PYTHON: `import sys
+
+def main():
+    values = list(map(int, sys.stdin.read().split()))
+    # Read input and print your answer.
+
+if __name__ == "__main__":
+    main()
+`,
+  CPP: `#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // Read input and print your answer.
+    return 0;
+}
+`,
+  NODEJS: `const fs = require('node:fs');
+
+const values = fs.readFileSync(0, 'utf8').trim().split(/\\s+/).map(Number);
+// Read input and print your answer.
+`,
+};
 
 type SubmissionApiError = { error?: { message?: string }; submissionId?: string };
 
 export function ProblemDetailsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [sourceCode, setSourceCode] = useState(starterCode);
+  const [language, setLanguage] = useState<SubmissionLanguage>('JAVA');
+  const [sourceByLanguage, setSourceByLanguage] = useState(starterCode);
+  const sourceCode = sourceByLanguage[language];
   const { data, isPending, isError } = useQuery({
     queryKey: ['problem', id],
     enabled: Boolean(id),
@@ -41,6 +75,8 @@ export function ProblemDetailsPage() {
   if (isPending) return <p className="page-state">Loading problem…</p>;
   if (isError || !data) return <p className="error page-state">Problem not found.</p>;
 
+  const selectedLanguage =
+    languageOptions.find((option) => option.value === language) ?? languageOptions[0];
   const errorBody = axios.isAxiosError<SubmissionApiError>(submit.error)
     ? submit.error.response?.data
     : undefined;
@@ -89,22 +125,31 @@ export function ProblemDetailsPage() {
               <p className="eyebrow">YOUR SOLUTION</p>
               <h2>Submit code</h2>
             </div>
-            <span className="editor-language">Java 21</span>
+            <span className="editor-language">{selectedLanguage.label}</span>
           </div>
           {isAuthenticated ? (
             <form className="submission-form" onSubmit={handleSubmit}>
               <label className="language-picker">
                 Language
-                <select value={language} disabled>
-                  <option value="JAVA">Java 21</option>
+                <select
+                  value={language}
+                  onChange={(event) => setLanguage(event.target.value as SubmissionLanguage)}
+                >
+                  {languageOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <div className="code-editor min-w-0" role="region" aria-label="Source code editor">
                 <Editor
                   height="100%"
-                  language="java"
+                  language={selectedLanguage.editorLanguage}
                   value={sourceCode}
-                  onChange={(value) => setSourceCode(value ?? '')}
+                  onChange={(value) =>
+                    setSourceByLanguage((current) => ({ ...current, [language]: value ?? '' }))
+                  }
                   theme="vs-dark"
                   loading="Loading editor…"
                   options={{

@@ -1,10 +1,10 @@
-import { SubmissionLanguage, SubmissionStatus } from '@prisma/client';
+import { SubmissionStatus } from '@prisma/client';
 import { prisma } from '../database/prisma.js';
 import { assertSubmissionTransition } from '../modules/submissions/state-machine.js';
 import type { Prisma } from '@prisma/client';
 import {
-  executeJavaSubmission,
-  type JavaExecutionResult,
+  executeSubmission,
+  type ExecutionResult,
   SourceSizeLimitError,
 } from './docker-executor.js';
 import { getLanguageProfile, UnsupportedLanguageError } from './language-profile.js';
@@ -33,20 +33,8 @@ export async function processSubmission(submissionId: string): Promise<Submissio
   if (claim.count !== 1) {
     const existing = await prisma.submission.findUnique({
       where: { id: submissionId },
-      select: { status: true, language: true },
+      select: { status: true },
     });
-    if (
-      existing?.status === SubmissionStatus.QUEUED &&
-      existing.language !== SubmissionLanguage.JAVA
-    ) {
-      await transitionSubmission(
-        submissionId,
-        SubmissionStatus.QUEUED,
-        SubmissionStatus.SYSTEM_ERROR,
-        { errorMessage: 'Only Java 21 submissions can be executed in this phase.' },
-      );
-      return { processed: true, status: SubmissionStatus.SYSTEM_ERROR };
-    }
     return { processed: false, status: existing?.status };
   }
 
@@ -92,7 +80,7 @@ export async function processSubmission(submissionId: string): Promise<Submissio
     });
     executionId = execution.id;
 
-    const result = await executeJavaSubmission({
+    const result = await executeSubmission(profile, {
       sourceCode: submission.sourceCode,
       testCases: submission.problem.testCases,
       onPhase: async (nextStatus) => {
@@ -167,7 +155,7 @@ async function transitionSubmission(
 
 async function persistExecutionSummary(
   executionId: string,
-  result: JavaExecutionResult,
+  result: ExecutionResult,
 ): Promise<void> {
   await prisma.execution.update({
     where: { id: executionId },

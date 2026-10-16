@@ -1,18 +1,19 @@
 # Sandbox security
 
-Submitted programs run in an ephemeral `eclipse-temurin:21-jdk-jammy` container. The trusted worker is responsible for creating and removing it. This is educational isolation, not a guarantee against hostile-code attacks.
+Submitted programs run in an ephemeral versioned runtime container: Java 21, Python 3.12, GCC 14 for C++23, or Node.js 22. The trusted worker is responsible for creating and removing it. This is educational isolation, not a guarantee against hostile-code attacks.
 
 ## Current controls
 
 - No outbound network (`--network none`).
-- Read-only container root filesystem with private temporary filesystems for `/workspace` and `/tmp`.
+- Read-only container root filesystem with private temporary filesystems for `/workspace` and `/tmp`. Both mounts are `noexec`.
+- Only C++ receives a separate, bounded executable tmpfs at `/exec` for the compiled binary.
 - Non-root UID `65534:65534`, all Linux capabilities dropped, and `no-new-privileges` enabled.
-- One CPU, 256 MiB memory with swap disabled for the container, and a 64-process limit.
-- Java compilation has a 15-second timeout; each test run has a 2-second timeout.
+- One CPU, swap disabled, and a 64-process limit. Java, Python, and Node.js use 256 MiB; C++ uses 512 MiB for compilation and execution.
+- Compilation or syntax checks have a 15-second timeout, except C++ compilation at 30 seconds; each test run has a 2-second timeout.
 - Source code is limited to 100,000 UTF-8 bytes and captured output to 1,000,000 bytes per command.
-- The worker uses a private temporary directory for source transfer and removes it after execution.
+- The worker streams source through standard input into the private workspace tmpfs; it does not mount a host source directory.
 - No host path is mounted into the execution container. The Docker socket exists only in the trusted worker container.
-- Containers are removed in a `finally` block after success or failure.
+- Containers are removed in a `finally` block after success or failure, which also removes their temporary filesystems.
 
 Memory usage is not yet measured, so `memoryUsedKb` remains null. The memory limit is enforced by Docker and an OOM-killed container maps to `MEMORY_LIMIT_EXCEEDED` when the daemon reports that condition.
 

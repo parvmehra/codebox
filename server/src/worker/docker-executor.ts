@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { SubmissionStatus, TestResultStatus } from '@prisma/client';
-import { JAVA_21_PROFILE, type LanguageProfile, withTimeout } from './language-profile.js';
+import {
+  type LanguageProfile,
+  supportedLanguageProfiles,
+  withTimeout,
+} from './language-profile.js';
 
 const INTERNAL_OUTPUT_LIMIT_BYTES = 64_000;
 const ERROR_MESSAGE_LIMIT = 4_000;
@@ -22,14 +26,14 @@ export type PersistedTestResult = {
   errorMessage: string | null;
 };
 
-export type JavaExecutionResult = {
+export type ExecutionResult = {
   status: SubmissionStatus;
   executionTimeMs: number | null;
   memoryUsedKb: number | null;
   errorMessage: string | null;
 };
 
-export type ExecuteJavaSubmissionOptions = {
+export type ExecuteSubmissionOptions = {
   sourceCode: string;
   testCases: ExecutionTestCase[];
   onPhase: (status: Extract<SubmissionStatus, 'COMPILING' | 'RUNNING'>) => Promise<void>;
@@ -65,8 +69,8 @@ export class DockerCommandTimeoutError extends DockerCommandError {
 }
 
 export class SourceSizeLimitError extends Error {
-  constructor() {
-    super(`Source code exceeds the ${JAVA_21_PROFILE.sourceLimitBytes}-byte limit.`);
+  constructor(limitBytes: number) {
+    super(`Source code exceeds the ${limitBytes}-byte limit.`);
     this.name = 'SourceSizeLimitError';
   }
 }
@@ -103,6 +107,9 @@ export function buildSandboxCreateArgs(containerName: string, profile: LanguageP
     '/workspace:rw,noexec,nosuid,nodev,size=64m,uid=65534,gid=65534',
     '--tmpfs',
     '/tmp:rw,noexec,nosuid,nodev,size=16m,uid=65534,gid=65534',
+    ...(profile.requiresExecutableTmpfs
+      ? ['--tmpfs', '/exec:rw,exec,nosuid,nodev,size=64m,uid=65534,gid=65534']
+      : []),
     '--entrypoint',
     '/usr/bin/sleep',
     profile.dockerImage,
@@ -115,27 +122,30 @@ export function normalizeOutput(output: string): string {
   return trimmed ? trimmed.split(/\s+/).join(' ') : '';
 }
 
-export async function ensureJavaImage(): Promise<void> {
-  const profile = JAVA_21_PROFILE;
+export async function ensureLanguageImages(): Promise<void> {
+  await Promise.all(supportedLanguageProfiles.map(ensureLanguageImage));
+}
+
+async function ensureLanguageImage(profile: LanguageProfile): Promise<void> {
   const inspect = await runDocker(['image', 'inspect', profile.dockerImage], {
     timeoutMs: 15_000,
   });
   if (inspect.exitCode === 0) return;
 
-  console.info({ image: profile.dockerImage }, 'Pulling Java execution image');
+  console.info({ image: profile.dockerImage }, 'Pulling language execution image');
   const pull = await runDocker(['pull', '--quiet', profile.dockerImage], {
     timeoutMs: IMAGE_PULL_TIMEOUT_MS,
   });
-  requireDockerSuccess(pull, 'pull Java execution image');
-  console.info({ image: profile.dockerImage }, 'Java execution image is ready');
+  requireDockerSuccess(pull, `pull ${profile.language} execution image`);
+  console.info({ image: profile.dockerImage }, 'Language execution image is ready');
 }
 
-export async function executeJavaSubmission(
-  options: ExecuteJavaSubmissionOptions,
-): Promise<JavaExecutionResult> {
-  const profile = JAVA_21_PROFILE;
+export async function executeSubmission(
+  profile: LanguageProfile,
+  options: ExecuteSubmissionOptions,
+): Promise<ExecutionResult> {
   if (Buffer.byteLength(options.sourceCode, 'utf8') > profile.sourceLimitBytes) {
-    throw new SourceSizeLimitError();
+    throw new SourceSizeLimitError(profile.sourceLimitBytes);
   }
 
   const containerName = `codebox-exec-${randomUUID()}`;
@@ -188,7 +198,7 @@ export async function executeJavaSubmission(
     }
     if (compile.exitCode !== 0) {
       if (compile.exitCode >= 125 && compile.exitCode <= 127) {
-        throw commandExecutionError('run Java compiler', compile);
+        throw commandExecutionError(`run ${profile.language} compiler`, compile);
       }
       return completedResult(
         SubmissionStatus.COMPILATION_ERROR,
@@ -229,10 +239,10 @@ export async function executeJavaSubmission(
           : `The program exceeded its ${profile.timeLimitMs} ms time limit.`;
       } else if (run.exitCode !== 0) {
         if (run.exitCode >= 125 && run.exitCode <= 127) {
-          throw commandExecutionError('run submitted Java program', run);
+          throw commandExecutionError(`run submitted ${profile.language} program`, run);
         }
         status = TestResultStatus.RUNTIME_ERROR;
-        errorMessage = limitMessage(run.stderr) ?? 'The program exited with a runtime error.';
+        errorMessage = 'The program exited with a runtime error.';
       } else if (normalizeOutput(run.stdout) !== normalizeOutput(testCase.expectedOut)) {
         status = TestResultStatus.WRONG_ANSWER;
       } else {
@@ -274,7 +284,7 @@ function completedResult(
   status: SubmissionStatus,
   executionTimeMs: number | null,
   errorMessage: string | null,
-): JavaExecutionResult {
+): ExecutionResult {
   return { status, executionTimeMs, memoryUsedKb: null, errorMessage: limitMessage(errorMessage) };
 }
 
