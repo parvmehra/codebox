@@ -232,7 +232,7 @@ export async function executeJavaSubmission(
           throw commandExecutionError('run submitted Java program', run);
         }
         status = TestResultStatus.RUNTIME_ERROR;
-        errorMessage = 'The program exited with a runtime error.';
+        errorMessage = limitMessage(run.stderr) ?? 'The program exited with a runtime error.';
       } else if (normalizeOutput(run.stdout) !== normalizeOutput(testCase.expectedOut)) {
         status = TestResultStatus.WRONG_ANSWER;
       } else {
