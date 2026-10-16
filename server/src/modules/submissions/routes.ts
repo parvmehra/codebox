@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/auth.js';
-import { publishSubmission } from '../../queue/submissions.js';
+import { publishSubmission, publishSubmissionEvent } from '../../queue/submissions.js';
 import { assertSubmissionTransition } from './state-machine.js';
 import { HttpError } from '../../utils/http-error.js';
 
@@ -46,6 +46,18 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
   });
 
   try {
+    await publishSubmissionEvent({
+      type: 'submission:queued',
+      submissionId: submission.id,
+      userId: request.user!.id,
+      status: SubmissionStatus.QUEUED,
+      updatedAt: submission.createdAt.toISOString(),
+    });
+  } catch (error) {
+    console.warn({ error, submissionId: submission.id }, 'Could not publish queued status event');
+  }
+
+  try {
     await publishSubmission(submission.id);
   } catch (error) {
     console.error({ error, submissionId: submission.id }, 'Could not publish submission job');
@@ -57,6 +69,21 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
         errorMessage: 'The submission could not be queued.',
       },
     });
+    try {
+      await publishSubmissionEvent({
+        type: 'submission:failed',
+        submissionId: submission.id,
+        userId: request.user!.id,
+        status: SubmissionStatus.SYSTEM_ERROR,
+        updatedAt: new Date().toISOString(),
+        errorMessage: 'The submission could not be queued.',
+      });
+    } catch (eventError) {
+      console.warn(
+        { error: eventError, submissionId: submission.id },
+        'Could not publish failure event',
+      );
+    }
 
     return response.status(503).json({
       error: {

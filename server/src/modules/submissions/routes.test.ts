@@ -16,14 +16,17 @@ vi.doMock('../../database/prisma.js', () => ({
   },
 }));
 
-vi.doMock('../../queue/submissions.js', () => ({ publishSubmission: vi.fn() }));
+vi.doMock('../../queue/submissions.js', () => ({
+  publishSubmission: vi.fn(),
+  publishSubmissionEvent: vi.fn(),
+}));
 
 process.env.DATABASE_URL ??= 'postgresql://test:test@localhost:5432/test';
 process.env.JWT_SECRET ??= 'test-secret-for-submission-api-tests-only-32';
 
 const { env } = await import('../../config/env.js');
 const { prisma } = await import('../../database/prisma.js');
-const { publishSubmission } = await import('../../queue/submissions.js');
+const { publishSubmission, publishSubmissionEvent } = await import('../../queue/submissions.js');
 const { app } = await import('../../app.js');
 
 const userId = 'a25145ab-21aa-4d20-9e08-3a2b4d59110f';
@@ -72,6 +75,13 @@ describe('submission API', () => {
       data: { id: submissionId, status: SubmissionStatus.QUEUED, language: 'JAVA' },
     });
     expect(publishSubmission).toHaveBeenCalledWith(submissionId);
+    expect(publishSubmissionEvent).toHaveBeenCalledWith({
+      type: 'submission:queued',
+      submissionId,
+      userId,
+      status: SubmissionStatus.QUEUED,
+      updatedAt: '2026-10-13T00:00:00.000Z',
+    });
   });
 
   it('marks the saved submission failed when the broker cannot confirm it', async () => {
@@ -103,6 +113,13 @@ describe('submission API', () => {
         errorMessage: 'The submission could not be queued.',
       },
     });
+    expect(publishSubmissionEvent).toHaveBeenCalledTimes(2);
+    expect(publishSubmissionEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'submission:failed',
+        status: SubmissionStatus.SYSTEM_ERROR,
+      }),
+    );
   });
 
   it('requires a valid JWT before looking up a problem', async () => {
@@ -139,6 +156,7 @@ describe('submission API', () => {
       expect(await response.json()).toMatchObject({ data: { language } });
     }
     expect(publishSubmission).toHaveBeenCalledTimes(4);
+    expect(publishSubmissionEvent).toHaveBeenCalledTimes(4);
   });
 
   it('rejects language values outside the supported enum', async () => {

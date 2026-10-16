@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   executionUpdate: vi.fn(),
   testResultCreate: vi.fn(),
   executeSubmission: vi.fn(),
+  publishEvent: vi.fn(),
 }));
 
 vi.doMock('../database/prisma.js', () => ({
@@ -39,6 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.submissionUpdateMany.mockResolvedValue({ count: 1 });
   mocks.submissionFindUnique.mockResolvedValue({
+    userId: 'a25145ab-21aa-4d20-9e08-3a2b4d59110f',
     language: SubmissionLanguage.JAVA,
     sourceCode: 'public class Main {}',
     problem: { testCases: [{ id: testCaseId, input: '1', expectedOut: '1' }] },
@@ -67,7 +69,7 @@ beforeEach(() => {
 
 describe('submission worker processor', () => {
   it('persists validated state transitions, execution metadata, and per-test results', async () => {
-    const result = await processSubmission(submissionId);
+    const result = await processSubmission(submissionId, mocks.publishEvent);
 
     expect(result).toEqual({ processed: true, status: SubmissionStatus.ACCEPTED });
     expect(mocks.submissionUpdateMany.mock.calls.map(([args]) => args.data.status)).toEqual([
@@ -100,13 +102,30 @@ describe('submission worker processor', () => {
         errorMessage: null,
       },
     });
+    expect(mocks.publishEvent.mock.calls.map(([event]) => event.type)).toEqual([
+      'submission:assigned',
+      'submission:starting',
+      'submission:compiling',
+      'submission:running',
+      'submission:test-progress',
+      'submission:completed',
+    ]);
+    expect(mocks.publishEvent.mock.calls[4]?.[0]).toMatchObject({
+      type: 'submission:test-progress',
+      submissionId,
+      userId: 'a25145ab-21aa-4d20-9e08-3a2b4d59110f',
+      testIndex: 1,
+      resultStatus: TestResultStatus.PASSED,
+    });
+    expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('input');
+    expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('expectedOut');
   });
 
   it('marks Docker or persistence failures as system errors without exposing details', async () => {
     mocks.executeSubmission.mockRejectedValue(new Error('private daemon address'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const result = await processSubmission(submissionId);
+    const result = await processSubmission(submissionId, mocks.publishEvent);
 
     expect(result).toEqual({ processed: true, status: SubmissionStatus.SYSTEM_ERROR });
     expect(mocks.submissionUpdateMany.mock.calls.at(-1)?.[0]).toMatchObject({
@@ -119,6 +138,11 @@ describe('submission worker processor', () => {
     expect(mocks.executionUpdate).toHaveBeenCalledWith({
       where: { id: executionId },
       data: { completedAt: expect.any(Date) },
+    });
+    expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).toMatchObject({
+      type: 'submission:failed',
+      status: SubmissionStatus.SYSTEM_ERROR,
+      errorMessage: 'The worker could not complete this submission.',
     });
   });
 
@@ -133,7 +157,7 @@ describe('submission worker processor', () => {
       };
     });
 
-    const result = await processSubmission(submissionId);
+    const result = await processSubmission(submissionId, mocks.publishEvent);
 
     expect(result).toEqual({ processed: true, status: SubmissionStatus.COMPILATION_ERROR });
     expect(mocks.submissionUpdateMany.mock.calls.map(([args]) => args.data.status)).toEqual([
@@ -146,6 +170,11 @@ describe('submission worker processor', () => {
       'Main.java:1: error: expected a semicolon',
     );
     expect(mocks.testResultCreate).not.toHaveBeenCalled();
+    expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).toMatchObject({
+      type: 'submission:failed',
+      status: SubmissionStatus.COMPILATION_ERROR,
+      errorMessage: 'Main.java:1: error: expected a semicolon',
+    });
   });
 
   it('does not start a second execution for a message whose submission is already terminal', async () => {

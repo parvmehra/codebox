@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
 import { z } from 'zod';
 import { runtimeEnv } from '../config/runtime-env.js';
 import { prisma } from '../database/prisma.js';
 import { SUBMISSION_QUEUE } from '../queue/submissions.js';
+import { SUBMISSION_EVENTS_EXCHANGE } from '../realtime/events.js';
+import { publishRealtimeEvent } from '../realtime/publish.js';
 import { ensureLanguageImages } from './docker-executor.js';
 import { processSubmission } from './processor.js';
 
@@ -11,14 +14,17 @@ const submissionJob = z.object({ submissionId: z.string().uuid() });
 let connection: ChannelModel | undefined;
 let channel: Channel | undefined;
 let consumerTag: string | undefined;
+let heartbeatTimer: NodeJS.Timeout | undefined;
 let isShuttingDown = false;
 const activeMessages = new Set<Promise<void>>();
+const workerId = randomUUID();
 
 async function startWorker(): Promise<void> {
   await ensureLanguageImages();
   connection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
   channel = await connection.createChannel();
   await channel.assertQueue(SUBMISSION_QUEUE, { durable: true });
+  await channel.assertExchange(SUBMISSION_EVENTS_EXCHANGE, 'topic', { durable: false });
   await channel.prefetch(1);
 
   connection.on('error', (error: Error) => {
@@ -47,6 +53,9 @@ async function startWorker(): Promise<void> {
     { noAck: false },
   );
   consumerTag = consumer.consumerTag;
+  heartbeatTimer = setInterval(() => publishWorkerHeartbeat('online'), 15_000);
+  heartbeatTimer.unref();
+  publishWorkerHeartbeat('online');
   console.info({ queue: SUBMISSION_QUEUE, consumerTag }, 'Submission worker is ready');
 }
 
@@ -74,7 +83,10 @@ async function handleMessage(message: ConsumeMessage): Promise<void> {
   }
 
   try {
-    const result = await processSubmission(parsed.data.submissionId);
+    if (!channel) throw new Error('The worker channel is unavailable.');
+    const result = await processSubmission(parsed.data.submissionId, (event) =>
+      publishRealtimeEvent(channel!, event),
+    );
     console.info({ submissionId: parsed.data.submissionId, ...result }, 'Submission job processed');
     channel?.ack(message);
   } catch (error) {
@@ -90,14 +102,31 @@ async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.info({ signal }, 'Worker shutdown requested');
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
 
   if (consumerTag) await channel?.cancel(consumerTag).catch(() => undefined);
   await Promise.allSettled([...activeMessages]);
+  publishWorkerHeartbeat('offline');
   await channel?.close().catch(() => undefined);
   await connection?.close().catch(() => undefined);
   await prisma.$disconnect().catch((error: unknown) => {
     console.error({ error }, 'Could not disconnect worker database client');
   });
+}
+
+function publishWorkerHeartbeat(status: 'online' | 'offline'): void {
+  if (!channel) return;
+  try {
+    publishRealtimeEvent(channel, {
+      type: 'worker:heartbeat',
+      workerId,
+      status,
+      activeJobs: activeMessages.size,
+      sentAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn({ error }, 'Could not publish worker heartbeat');
+  }
 }
 
 process.once('SIGINT', () => void shutdown('SIGINT'));

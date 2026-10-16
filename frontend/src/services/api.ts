@@ -1,8 +1,12 @@
 import axios from 'axios';
 
+const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000/api';
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:4000/api',
+  baseURL: apiBaseUrl,
 });
+
+export const realtimeOrigin = new URL(apiBaseUrl, window.location.origin).origin;
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
@@ -74,4 +78,11 @@ export type SubmissionDetails = SubmissionSummary & {
   sourceCode: string;
   errorMessage: string | null;
   testResults: SubmissionTestResult[];
+};
+
+export type WorkerStatus = {
+  status: 'online' | 'offline';
+  workerCount: number;
+  activeJobs: number;
+  lastHeartbeatAt: string | null;
 };

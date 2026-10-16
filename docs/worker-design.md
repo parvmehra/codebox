@@ -23,11 +23,17 @@ The Docker socket is mounted only in the trusted worker container. The worker us
 
 On shutdown, the worker cancels its RabbitMQ consumer, waits for the current delivery to finish, then closes RabbitMQ and PostgreSQL connections. Compose allows 30 seconds for that shutdown before forcing the container to stop.
 
+## Real-time updates and worker status
+
+After a status or test-result write succeeds, the worker publishes a compact event to the non-durable `submissions.events` topic exchange. The API owns a temporary, auto-delete queue and forwards submission events to the user's authenticated Socket.IO room. The event payload omits source, test input, and expected output. The API publishes `submission:queued` before sending the durable job, preserving lifecycle order.
+
+The worker reports its active job count every 15 seconds. The API keeps these heartbeats in memory and reports workers offline after 45 seconds without an update. The `/status` page polls the public worker-status endpoint every five seconds. Heartbeats are not persisted yet; durable worker records and stale-worker recovery belong to the reliability phase. If an event is missed, the submission details page refreshes through REST polling.
+
 ## Learning notes
 
 - **Problem solved:** queue consumers absorb execution work asynchronously and can scale independently of request handling.
 - **Why this design:** a single worker process and a small profile object are straightforward to test and explain; language commands do not spread through queue logic.
 - **Why C++ has a second tmpfs:** the source workspace stays `noexec`; the compiler writes its output to a separate, bounded executable mount that is removed with the container.
-- **Important failure cases:** a worker crash after claiming a submission can leave it in an in-progress state. Heartbeats and stale-worker recovery are planned for the reliability phase. Current duplicate handling is not a complete recovery protocol.
+- **Important failure cases:** a worker crash after claiming a submission can leave it in an in-progress state. The basic heartbeat can show the worker offline, but does not recover the submission. Current duplicate handling is not a complete recovery protocol.
 - **Interview question — Why prefetch one?** It bounds the number of unacknowledged jobs held by each worker and keeps the initial scheduling behavior simple.
 - **Interview question — Why use a database conditional update to claim a job?** It makes the state change atomic and prevents two workers from both claiming the same queued row in the normal case.

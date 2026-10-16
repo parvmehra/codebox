@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api, type SubmissionDetails, type SubmissionStatus } from '../services/api';
+import { useSubmissionRealtime } from '../hooks/useSubmissionRealtime';
 
 const terminalStatuses = new Set<SubmissionStatus>([
   'ACCEPTED',
@@ -31,6 +32,7 @@ const statusDescriptions: Record<SubmissionStatus, string> = {
 
 export function SubmissionDetailsPage() {
   const { id } = useParams();
+  const realtime = useSubmissionRealtime(id);
   const { data, isPending, isError } = useQuery({
     queryKey: ['submission', id],
     enabled: Boolean(id && localStorage.getItem('token')),
@@ -39,7 +41,7 @@ export function SubmissionDetailsPage() {
     refetchInterval: (query) => {
       if (query.state.status === 'error') return false;
       const status = query.state.data?.status;
-      return status && terminalStatuses.has(status) ? false : 2000;
+      return status && terminalStatuses.has(status) ? false : realtime === 'live' ? 15_000 : 2_000;
     },
   });
 
@@ -76,8 +78,25 @@ export function SubmissionDetailsPage() {
 
       <div className="status-panel">
         <span className="status-indicator" />
-        <p>{statusDescriptions[data.status]}</p>
+        <div className="status-panel-copy">
+          <p>{statusDescriptions[data.status]}</p>
+          <span className={`realtime-connection ${realtime}`}>
+            <i />
+            {realtime === 'live'
+              ? 'Live updates connected'
+              : realtime === 'reconnecting'
+                ? 'Reconnecting · checking status periodically'
+                : 'Checking status periodically'}
+          </span>
+        </div>
       </div>
+      {data.status === 'RUNNING' && (
+        <p className="test-progress-summary" aria-live="polite">
+          {data.testResults.length === 0
+            ? 'Waiting for the first test result…'
+            : `${data.testResults.length} ${data.testResults.length === 1 ? 'test' : 'tests'} checked so far`}
+        </p>
+      )}
       {data.errorMessage && <p className="error execution-error">{data.errorMessage}</p>}
       {data.executionTimeMs !== null && (
         <p className="execution-metrics">
@@ -87,7 +106,12 @@ export function SubmissionDetailsPage() {
       )}
       {data.testResults.length > 0 && (
         <section className="test-results">
-          <h2>Test results</h2>
+          <div className="test-results-heading">
+            <h2>Test results</h2>
+            <span>
+              {data.testResults.length} {data.testResults.length === 1 ? 'test' : 'tests'} checked
+            </span>
+          </div>
           <div className="test-results-list">
             {data.testResults.map((result) => (
               <div className="test-result-row" key={result.testIndex}>

@@ -1,6 +1,11 @@
 import amqp from 'amqplib';
 import type { ChannelModel, ConfirmChannel } from 'amqplib';
 import { runtimeEnv } from '../config/runtime-env.js';
+import {
+  realtimeRoutingKey,
+  SUBMISSION_EVENTS_EXCHANGE,
+  type SubmissionRealtimeEvent,
+} from '../realtime/events.js';
 
 export const SUBMISSION_QUEUE = 'submissions.execute';
 
@@ -14,6 +19,7 @@ async function createChannel(): Promise<ConfirmChannel> {
   try {
     const nextChannel = await nextConnection.createConfirmChannel();
     await nextChannel.assertQueue(SUBMISSION_QUEUE, { durable: true });
+    await nextChannel.assertExchange(SUBMISSION_EVENTS_EXCHANGE, 'topic', { durable: false });
 
     nextConnection.on('error', (error: Error) => {
       console.error({ error }, 'RabbitMQ connection error');
@@ -73,6 +79,21 @@ export async function publishSubmission(submissionId: string): Promise<void> {
         timestamp: Date.now(),
         type: 'submission.execute',
       },
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
+}
+
+export async function publishSubmissionEvent(event: SubmissionRealtimeEvent): Promise<void> {
+  const publisher = await getConfirmChannel();
+  const payload = Buffer.from(JSON.stringify(event));
+
+  await new Promise<void>((resolve, reject) => {
+    publisher.publish(
+      SUBMISSION_EVENTS_EXCHANGE,
+      realtimeRoutingKey(event),
+      payload,
+      { contentType: 'application/json', persistent: false, type: event.type },
       (error) => (error ? reject(error) : resolve()),
     );
   });

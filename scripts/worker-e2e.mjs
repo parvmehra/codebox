@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { io } from 'socket.io-client';
 
 const apiBase = process.env.API_BASE_URL ?? 'http://127.0.0.1:4000/api';
 const healthUrl = new URL('/health', apiBase).toString();
@@ -59,6 +60,29 @@ async function waitForSubmission(submissionId, token, timeoutMs = 180_000) {
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+async function connectSocket(token) {
+  const socket = io(new URL(apiBase).origin, { auth: { token }, timeout: 15_000 });
+  await new Promise((resolve, reject) => {
+    socket.once('connect', resolve);
+    socket.once('connect_error', reject);
+  });
+  return socket;
+}
+
+async function isSocketRejected(token) {
+  const socket = io(new URL(apiBase).origin, {
+    auth: { token },
+    reconnection: false,
+    timeout: 5_000,
+  });
+  const rejected = await new Promise((resolve) => {
+    socket.once('connect', () => resolve(false));
+    socket.once('connect_error', () => resolve(true));
+  });
+  socket.disconnect();
+  return rejected;
+}
+
 await waitForApi();
 
 const account = await request('/auth/register', {
@@ -70,6 +94,24 @@ const account = await request('/auth/register', {
 });
 const token = account.token;
 assert.equal(typeof token, 'string');
+assert.equal(await isSocketRejected('invalid-e2e-token'), true, 'Socket.IO must require a JWT.');
+const otherAccount = await request('/auth/register', {
+  method: 'POST',
+  body: JSON.stringify({
+    email: `worker-e2e-other-${randomUUID()}@example.test`,
+    password: 'Worker-E2E-Password-123!',
+  }),
+});
+const socket = await connectSocket(token);
+const otherSocket = await connectSocket(otherAccount.token);
+const submissionEvents = [];
+const otherUserEvents = [];
+socket.onAny((type, payload) => {
+  if (type.startsWith('submission:')) submissionEvents.push({ type, ...payload });
+});
+otherSocket.onAny((type, payload) => {
+  if (type.startsWith('submission:')) otherUserEvents.push({ type, ...payload });
+});
 
 const { data: problems } = await request('/problems');
 const problem = problems.find((candidate) => candidate.slug === 'two-sum');
@@ -158,27 +200,68 @@ for (let i = 0; i < count; i++) {
   },
 ];
 
-for (const { language, sourceCode } of solutions) {
-  const queued = await request('/submissions', {
-    method: 'POST',
-    token,
-    body: JSON.stringify({ problemId: problem.id, language, sourceCode }),
-  });
-  assert.equal(queued.data.status, 'QUEUED');
+try {
+  for (const { language, sourceCode } of solutions) {
+    const queued = await request('/submissions', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ problemId: problem.id, language, sourceCode }),
+    });
+    assert.equal(queued.data.status, 'QUEUED');
 
-  const result = await waitForSubmission(queued.data.id, token);
-  assert.equal(
-    result.status,
-    'ACCEPTED',
-    'Unexpected final result for ' + language + ': ' + JSON.stringify(result),
-  );
-  assert.deepEqual(
-    result.testResults.map(({ status }) => status),
-    ['PASSED'],
-    'The ' + language + ' worker should persist a passing verdict for the seeded test case.',
-  );
-  assert.equal(Object.hasOwn(result.testResults[0], 'input'), false);
-  assert.equal(Object.hasOwn(result.testResults[0], 'expectedOut'), false);
+    const result = await waitForSubmission(queued.data.id, token);
+    assert.equal(
+      result.status,
+      'ACCEPTED',
+      'Unexpected final result for ' + language + ': ' + JSON.stringify(result),
+    );
+    assert.deepEqual(
+      result.testResults.map(({ status }) => status),
+      ['PASSED'],
+      'The ' + language + ' worker should persist a passing verdict for the seeded test case.',
+    );
+    assert.equal(Object.hasOwn(result.testResults[0], 'input'), false);
+    assert.equal(Object.hasOwn(result.testResults[0], 'expectedOut'), false);
+
+    const deadline = Date.now() + 5_000;
+    while (
+      Date.now() < deadline &&
+      !submissionEvents.some(
+        (event) => event.submissionId === queued.data.id && event.type === 'submission:completed',
+      )
+    ) {
+      await delay(50);
+    }
+    const events = submissionEvents.filter((event) => event.submissionId === queued.data.id);
+    assert.deepEqual(
+      events.map(({ type }) => type),
+      [
+        'submission:queued',
+        'submission:assigned',
+        'submission:starting',
+        'submission:compiling',
+        'submission:running',
+        'submission:test-progress',
+        'submission:completed',
+      ],
+      'The owner should receive the ordered lifecycle and test progress events.',
+    );
+    for (const event of events) {
+      assert.equal(Object.hasOwn(event, 'userId'), false);
+      assert.equal(Object.hasOwn(event, 'input'), false);
+      assert.equal(Object.hasOwn(event, 'expectedOut'), false);
+      assert.equal(Object.hasOwn(event, 'sourceCode'), false);
+    }
+  }
+
+  await delay(250);
+  assert.deepEqual(otherUserEvents, [], 'Another user must not receive submission events.');
+  const { data: workerStatus } = await request('/workers/status');
+  assert.equal(workerStatus.status, 'online');
+  assert.ok(workerStatus.workerCount >= 1);
+} finally {
+  socket.disconnect();
+  otherSocket.disconnect();
 }
 
-console.info('Worker end-to-end flow passed for Java, Python, C++, and Node.js.');
+console.info('Worker and Socket.IO end-to-end flow passed for Java, Python, C++, and Node.js.');

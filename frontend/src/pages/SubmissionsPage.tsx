@@ -1,11 +1,13 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type SubmissionSummary } from '../services/api';
+import { useSubmissionRealtime } from '../hooks/useSubmissionRealtime';
 
 type SubmissionPage = { data: SubmissionSummary[]; nextCursor: string | null };
 
 export function SubmissionsPage() {
   const isAuthenticated = Boolean(localStorage.getItem('token'));
+  useSubmissionRealtime(undefined);
   const query = useInfiniteQuery({
     queryKey: ['submissions'],
     enabled: isAuthenticated,
@@ -23,7 +25,9 @@ export function SubmissionsPage() {
     return (
       <section className="page-state">
         <p>Log in to see your submission history.</p>
-        <Link className="button" to="/login">Log in</Link>
+        <Link className="button" to="/login">
+          Log in
+        </Link>
       </section>
     );
   }
@@ -44,17 +48,27 @@ export function SubmissionsPage() {
         <div className="empty-state">
           <h2>No submissions yet</h2>
           <p>Choose a problem and send your first solution.</p>
-          <Link className="button" to="/problems">Browse problems</Link>
+          <Link className="button" to="/problems">
+            Browse problems
+          </Link>
         </div>
       ) : (
         <div className="submission-list">
           {submissions.map((submission) => (
-            <Link className="submission-row" key={submission.id} to={`/submissions/${submission.id}`}>
+            <Link
+              className="submission-row"
+              key={submission.id}
+              to={`/submissions/${submission.id}`}
+            >
               <div>
                 <h2>{submission.problem.title}</h2>
-                <p>{submission.language} · {new Date(submission.createdAt).toLocaleString()}</p>
+                <p>
+                  {submission.language} · {new Date(submission.createdAt).toLocaleString()}
+                </p>
               </div>
-              <span className={`status-badge ${submission.status.toLowerCase().replaceAll('_', '-')}`}>
+              <span
+                className={`status-badge ${submission.status.toLowerCase().replaceAll('_', '-')}`}
+              >
                 {submission.status.replaceAll('_', ' ')}
               </span>
             </Link>
@@ -63,7 +77,11 @@ export function SubmissionsPage() {
       )}
 
       {query.hasNextPage && (
-        <button className="button load-more" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>
+        <button
+          className="button load-more"
+          onClick={() => void query.fetchNextPage()}
+          disabled={query.isFetchingNextPage}
+        >
           {query.isFetchingNextPage ? 'Loading…' : 'Load older submissions'}
         </button>
       )}

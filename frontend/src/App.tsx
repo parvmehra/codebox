@@ -7,11 +7,14 @@ import { ProblemsPage } from './pages/ProblemsPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { SubmissionDetailsPage } from './pages/SubmissionDetailsPage';
 import { SubmissionsPage } from './pages/SubmissionsPage';
+import { WorkerStatusPage } from './pages/WorkerStatusPage';
 
 function SiteHeader() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('token')));
+  const [isAuthenticated, setIsAuthenticated] = useState(() =>
+    Boolean(localStorage.getItem('token')),
+  );
 
   useEffect(() => {
     setIsAuthenticated(Boolean(localStorage.getItem('token')));
@@ -25,18 +28,26 @@ function SiteHeader() {
 
   return (
     <header>
-      <Link to="/" className="brand">Exec<span>Flow</span></Link>
+      <Link to="/" className="brand">
+        Exec<span>Flow</span>
+      </Link>
       <nav aria-label="Primary navigation">
         <Link to="/problems">Problems</Link>
         {isAuthenticated ? (
           <>
+            <Link to="/status">Worker status</Link>
             <Link to="/submissions">My submissions</Link>
-            <button className="nav-action" onClick={logOut}>Log out</button>
+            <button className="nav-action" onClick={logOut}>
+              Log out
+            </button>
           </>
         ) : (
           <>
+            <Link to="/status">Worker status</Link>
             <Link to="/login">Log in</Link>
-            <Link className="button small" to="/register">Get started</Link>
+            <Link className="button small" to="/register">
+              Get started
+            </Link>
           </>
         )}
       </nav>
@@ -57,6 +68,7 @@ export default function App() {
           <Route path="/problems/:id" element={<ProblemDetailsPage />} />
           <Route path="/submissions" element={<SubmissionsPage />} />
           <Route path="/submissions/:id" element={<SubmissionDetailsPage />} />
+          <Route path="/status" element={<WorkerStatusPage />} />
         </Routes>
       </main>
     </>

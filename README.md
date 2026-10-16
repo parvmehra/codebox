@@ -1,6 +1,6 @@
 # Distributed Code Execution & Evaluation Platform
 
-The project has a React client with a Monaco code editor, a modular Express API, PostgreSQL with Prisma, JWT authentication, problem browsing, and a language-aware submission worker. Authenticated users can enqueue Java 21, Python 3.12, C++23, and Node.js 22 submissions; the worker compiles or checks and evaluates them in short-lived Docker containers and stores per-test verdicts.
+The project has a React client with a Monaco code editor, a modular Express API, PostgreSQL with Prisma, JWT authentication, problem browsing, and a language-aware submission worker. Authenticated users can enqueue Java 21, Python 3.12, C++23, and Node.js 22 submissions; the worker compiles or checks and evaluates them in short-lived Docker containers and stores per-test verdicts. Submission details receive live Socket.IO status and test-progress events, with REST polling as a fallback.
 
 ## Architecture
 
@@ -80,11 +80,11 @@ The `ASSIGNED → QUEUED` transition is reserved for a retry before execution st
 
 ## Current execution support
 
-The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit execution profiles. It records compile or syntax-check outcomes and per-test verdicts. Test input and expected output are never returned from the submission API.
+The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit execution profiles. It records compile or syntax-check outcomes and per-test verdicts. Test input and expected output are never returned from the submission API or realtime events. The worker status page uses in-memory heartbeats and is informational; it does not recover stuck jobs.
 
 ## Security note
 
-Passwords are hashed with bcrypt and protected endpoints require JWTs. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. Worker heartbeats, retry/dead-letter behavior, cancellation, Socket.IO updates, Redis, metrics, and contests are not implemented yet.
+Passwords are hashed with bcrypt and protected endpoints require JWTs. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. Persisted worker heartbeats, retry/dead-letter behavior, stale-job recovery, cancellation, Redis, metrics, and contests are not implemented yet.
 
 ## Learning notes
 
@@ -97,4 +97,4 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Each lang
 
 ## Next phase
 
-Phase 4 adds Socket.IO lifecycle updates, live test progress, a submission result UI, and a basic worker status view.
+Phase 5 adds bounded retries, a dead-letter queue, idempotency guarantees, persisted worker heartbeats, stale-worker detection, cancellation, and graceful shutdown handling.
