@@ -39,6 +39,10 @@ jobs:
       - name: Verify the Java worker flow
         run: node scripts/worker-e2e.mjs
 
+      - name: Show integration service logs after failure
+        if: failure()
+        run: docker compose logs --no-color api postgres rabbitmq worker
+
       - name: Stop integration stack
         if: always()
         run: docker compose down --volumes --remove-orphans
