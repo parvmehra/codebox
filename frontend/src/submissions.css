@@ -531,3 +531,14 @@
     flex-direction: column;
   }
 }
+.cancel-submission {
+  margin-top: 1rem;
+  border: 1px solid #363d4e;
+  color: #ffacb7;
+  background: transparent;
+}
+
+.cancel-submission:hover:not(:disabled) {
+  border-color: #ffacb7;
+  background: #29202a;
+}

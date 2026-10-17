@@ -49,6 +49,11 @@ enum TestResultStatus {
   RUNTIME_ERROR
 }
 
+enum WorkerStatus {
+  ONLINE
+  OFFLINE
+}
+
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
@@ -98,6 +103,12 @@ model Submission {
   language        SubmissionLanguage
   sourceCode      String             @db.Text
   status          SubmissionStatus   @default(QUEUED)
+  attemptCount    Int                @default(0)
+  workerId        String?
+  leaseToken      String?
+  leaseExpiresAt  DateTime?
+  lastEnqueuedAt  DateTime           @default(now())
+  needsDispatch   Boolean            @default(false)
   executionTimeMs Int?
   memoryUsedKb    Int?
   errorMessage    String?            @db.Text
@@ -109,6 +120,32 @@ model Submission {
 
   @@index([userId, createdAt])
   @@index([problemId, status])
+  @@index([status, leaseExpiresAt])
+  @@index([status, lastEnqueuedAt])
+  @@index([status, needsDispatch, lastEnqueuedAt])
+}
+
+model Worker {
+  id              String            @id
+  status          WorkerStatus      @default(ONLINE)
+  activeJobs      Int               @default(0)
+  lastHeartbeatAt DateTime          @default(now())
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  heartbeats      WorkerHeartbeat[]
+
+  @@index([status, lastHeartbeatAt])
+}
+
+model WorkerHeartbeat {
+  id         String       @id @default(uuid())
+  workerId   String
+  status     WorkerStatus
+  activeJobs Int
+  recordedAt DateTime     @default(now())
+  worker     Worker       @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, recordedAt])
 }
 
 model Execution {

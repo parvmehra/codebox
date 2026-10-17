@@ -3,8 +3,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/auth.js';
-import { publishSubmission, publishSubmissionEvent } from '../../queue/submissions.js';
-import { assertSubmissionTransition } from './state-machine.js';
+import {
+  publishSubmission,
+  publishSubmissionCancellation,
+  publishSubmissionEvent,
+} from '../../queue/submissions.js';
+import { assertSubmissionTransition, isTerminalSubmissionStatus } from './state-machine.js';
 import { HttpError } from '../../utils/http-error.js';
 
 const createSubmissionInput = z.object({
@@ -23,6 +27,13 @@ const historyQuery = z.object({
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
+const cancellableStatuses = [
+  SubmissionStatus.QUEUED,
+  SubmissionStatus.ASSIGNED,
+  SubmissionStatus.STARTING,
+  SubmissionStatus.COMPILING,
+  SubmissionStatus.RUNNING,
+] as const;
 
 export const submissionsRouter = Router();
 
@@ -125,6 +136,72 @@ submissionsRouter.get('/', requireAuth, async (request: AuthenticatedRequest, re
     nextCursor: hasMore ? (records.at(-1)?.id ?? null) : null,
   });
 });
+
+submissionsRouter.post(
+  '/:id/cancel',
+  requireAuth,
+  async (request: AuthenticatedRequest, response) => {
+    const id = z.string().uuid().parse(request.params.id);
+    const current = await prisma.submission.findFirst({
+      where: { id, userId: request.user!.id },
+      select: { id: true, status: true },
+    });
+    if (!current) throw new HttpError(404, 'SUBMISSION_NOT_FOUND', 'Submission not found.');
+    if (current.status === SubmissionStatus.CANCELLED) {
+      return response.json({ data: { id, status: current.status } });
+    }
+    if (isTerminalSubmissionStatus(current.status)) {
+      throw new HttpError(
+        409,
+        'SUBMISSION_ALREADY_FINISHED',
+        'This submission has already finished.',
+      );
+    }
+
+    assertSubmissionTransition(current.status, SubmissionStatus.CANCELLED);
+    const cancelled = await prisma.submission.updateMany({
+      where: { id, userId: request.user!.id, status: { in: [...cancellableStatuses] } },
+      data: {
+        status: SubmissionStatus.CANCELLED,
+        errorMessage: null,
+        workerId: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        needsDispatch: false,
+      },
+    });
+    if (cancelled.count !== 1) {
+      const latest = await prisma.submission.findFirst({
+        where: { id, userId: request.user!.id },
+        select: { status: true },
+      });
+      if (latest?.status === SubmissionStatus.CANCELLED) {
+        return response.json({ data: { id, status: latest.status } });
+      }
+      throw new HttpError(
+        409,
+        'SUBMISSION_ALREADY_FINISHED',
+        'This submission has already finished.',
+      );
+    }
+
+    const updatedAt = new Date().toISOString();
+    await publishSubmissionEvent({
+      type: 'submission:cancelled',
+      submissionId: id,
+      userId: request.user!.id,
+      status: SubmissionStatus.CANCELLED,
+      updatedAt,
+    }).catch((error: unknown) => {
+      console.warn({ error, submissionId: id }, 'Could not publish cancellation event');
+    });
+    await publishSubmissionCancellation(id).catch((error: unknown) => {
+      console.warn({ error, submissionId: id }, 'Could not signal submission cancellation');
+    });
+
+    return response.json({ data: { id, status: SubmissionStatus.CANCELLED } });
+  },
+);
 
 submissionsRouter.get('/:id', requireAuth, async (request: AuthenticatedRequest, response) => {
   const id = z.string().uuid().parse(request.params.id);

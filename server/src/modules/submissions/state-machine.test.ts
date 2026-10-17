@@ -14,13 +14,16 @@ describe('submission state machine', () => {
     [Status.ASSIGNED, Status.QUEUED],
     [Status.STARTING, Status.COMPILING],
     [Status.STARTING, Status.RUNNING],
+    [Status.STARTING, Status.QUEUED],
     [Status.COMPILING, Status.RUNNING],
+    [Status.COMPILING, Status.QUEUED],
     [Status.COMPILING, Status.COMPILATION_ERROR],
     [Status.RUNNING, Status.ACCEPTED],
     [Status.RUNNING, Status.WRONG_ANSWER],
     [Status.RUNNING, Status.RUNTIME_ERROR],
     [Status.RUNNING, Status.TIME_LIMIT_EXCEEDED],
     [Status.RUNNING, Status.MEMORY_LIMIT_EXCEEDED],
+    [Status.RUNNING, Status.QUEUED],
     [Status.QUEUED, Status.CANCELLED],
   ])('allows %s -> %s', (current, next) => {
     expect(canTransitionSubmission(current, next)).toBe(true);
@@ -37,7 +40,9 @@ describe('submission state machine', () => {
     [Status.SYSTEM_ERROR, Status.QUEUED],
   ])('rejects %s -> %s', (current, next) => {
     expect(canTransitionSubmission(current, next)).toBe(false);
-    expect(() => assertSubmissionTransition(current, next)).toThrow(InvalidSubmissionTransitionError);
+    expect(() => assertSubmissionTransition(current, next)).toThrow(
+      InvalidSubmissionTransitionError,
+    );
   });
 
   it('marks only completed outcomes as terminal', () => {

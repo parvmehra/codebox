@@ -51,17 +51,18 @@ GitHub Actions runs linting, TypeScript checks, server tests, application builds
 
 ## Implemented endpoints
 
-| Method | Endpoint               | Purpose                                          |
-| ------ | ---------------------- | ------------------------------------------------ |
-| POST   | `/api/auth/register`   | Register a user                                  |
-| POST   | `/api/auth/login`      | Log in and receive a JWT                         |
-| GET    | `/api/auth/me`         | Return the authenticated user                    |
-| GET    | `/api/problems`        | List published problems                          |
-| GET    | `/api/problems/:id`    | Get a problem without hidden tests               |
-| POST   | `/api/problems`        | Create a problem (admin only)                    |
-| POST   | `/api/submissions`     | Save and enqueue a submission (JWT required)     |
-| GET    | `/api/submissions`     | List the authenticated user's submissions        |
-| GET    | `/api/submissions/:id` | Read one of the authenticated user's submissions |
+| Method | Endpoint                      | Purpose                                          |
+| ------ | ----------------------------- | ------------------------------------------------ |
+| POST   | `/api/auth/register`          | Register a user                                  |
+| POST   | `/api/auth/login`             | Log in and receive a JWT                         |
+| GET    | `/api/auth/me`                | Return the authenticated user                    |
+| GET    | `/api/problems`               | List published problems                          |
+| GET    | `/api/problems/:id`           | Get a problem without hidden tests               |
+| POST   | `/api/problems`               | Create a problem (admin only)                    |
+| POST   | `/api/submissions`            | Save and enqueue a submission (JWT required)     |
+| GET    | `/api/submissions`            | List the authenticated user's submissions        |
+| GET    | `/api/submissions/:id`        | Read one of the authenticated user's submissions |
+| POST   | `/api/submissions/:id/cancel` | Cancel an owned queued or active submission      |
 
 ## Submission lifecycle contract
 
@@ -71,20 +72,20 @@ Submission statuses are persisted with each record. The state machine in `server
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `QUEUED`       | `ASSIGNED`, `CANCELLED`, `SYSTEM_ERROR`                                                                                                                                     |
 | `ASSIGNED`     | `STARTING`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR`                                                                                                                   |
-| `STARTING`     | `COMPILING`, `RUNNING`, `CANCELLED`, `SYSTEM_ERROR`                                                                                                                         |
-| `COMPILING`    | `RUNNING`, `COMPILATION_ERROR`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `CANCELLED`, `SYSTEM_ERROR`                                                                 |
-| `RUNNING`      | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `RUNTIME_ERROR`, `CANCELLED`, `SYSTEM_ERROR`                                                    |
+| `STARTING`     | `COMPILING`, `RUNNING`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR`                                                                                                       |
+| `COMPILING`    | `RUNNING`, `COMPILATION_ERROR`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR`                                               |
+| `RUNNING`      | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `RUNTIME_ERROR`, `QUEUED` (retry), `CANCELLED`, `SYSTEM_ERROR`                                  |
 | Final outcomes | `ACCEPTED`, `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, `MEMORY_LIMIT_EXCEEDED`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `SYSTEM_ERROR`, `CANCELLED` have no outgoing transitions. |
 
-The `ASSIGNED → QUEUED` transition is reserved for a retry before execution starts. Each final outcome is terminal. Unit tests cover allowed and rejected transitions.
+Retries can return any active state to `QUEUED` while the current lease is still owned. Each final outcome is terminal. Unit tests cover allowed and rejected transitions.
 
 ## Current execution support
 
-The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit execution profiles. It records compile or syntax-check outcomes and per-test verdicts. Test input and expected output are never returned from the submission API or realtime events. The worker status page uses in-memory heartbeats and is informational; it does not recover stuck jobs.
+The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit execution profiles. It records compile or syntax-check outcomes and per-test verdicts. Test input and expected output are never returned from the submission API or realtime events. Persisted worker heartbeats power the status page, while expiring submission leases allow stale-job recovery.
 
 ## Security note
 
-Passwords are hashed with bcrypt and protected endpoints require JWTs. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. Persisted worker heartbeats, retry/dead-letter behavior, stale-job recovery, cancellation, Redis, metrics, and contests are not implemented yet.
+Passwords are hashed with bcrypt and protected endpoints require JWTs. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. The retry limit is three total execution attempts; dead-letter messages currently require operator inspection and have no replay UI. Redis, metrics, and contests are not implemented yet.
 
 ## Learning notes
 
@@ -97,4 +98,4 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Each lang
 
 ## Next phase
 
-Phase 5 adds bounded retries, a dead-letter queue, idempotency guarantees, persisted worker heartbeats, stale-worker detection, cancellation, and graceful shutdown handling.
+Phase 5 reliability is implemented: bounded retries, a durable dead-letter queue, lease-based idempotency and stale-job recovery, persisted worker heartbeats, cancellation, and bounded graceful shutdown. Phase 6 will add the simple FIFO/priority scheduler and worker capability matching.

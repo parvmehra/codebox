@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api, type SubmissionDetails, type SubmissionStatus } from '../services/api';
 import { useSubmissionRealtime } from '../hooks/useSubmissionRealtime';
@@ -32,7 +32,17 @@ const statusDescriptions: Record<SubmissionStatus, string> = {
 
 export function SubmissionDetailsPage() {
   const { id } = useParams();
+  const queryClient = useQueryClient();
   const realtime = useSubmissionRealtime(id);
+  const cancelSubmission = useMutation({
+    mutationFn: async () => api.post(`/submissions/${id}/cancel`),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['submission', id] }),
+        queryClient.invalidateQueries({ queryKey: ['submissions'] }),
+      ]);
+    },
+  });
   const { data, isPending, isError } = useQuery({
     queryKey: ['submission', id],
     enabled: Boolean(id && localStorage.getItem('token')),
@@ -90,6 +100,20 @@ export function SubmissionDetailsPage() {
           </span>
         </div>
       </div>
+      {!terminalStatuses.has(data.status) && (
+        <button
+          className="button cancel-submission"
+          onClick={() => cancelSubmission.mutate()}
+          disabled={cancelSubmission.isPending}
+        >
+          {cancelSubmission.isPending ? 'Cancelling…' : 'Cancel submission'}
+        </button>
+      )}
+      {cancelSubmission.isError && (
+        <p className="error execution-error" role="alert">
+          The submission could not be cancelled. Its latest status is shown below.
+        </p>
+      )}
       {data.status === 'RUNNING' && (
         <p className="test-progress-summary" aria-live="polite">
           {data.testResults.length === 0

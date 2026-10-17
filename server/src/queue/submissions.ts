@@ -6,8 +6,14 @@ import {
   SUBMISSION_EVENTS_EXCHANGE,
   type SubmissionRealtimeEvent,
 } from '../realtime/events.js';
+import {
+  assertSubmissionTopology,
+  SUBMISSION_CONTROL_EXCHANGE,
+  SUBMISSION_DEAD_QUEUE,
+  SUBMISSION_QUEUE,
+} from './topology.js';
 
-export const SUBMISSION_QUEUE = 'submissions.execute';
+export { SUBMISSION_QUEUE } from './topology.js';
 
 let connection: ChannelModel | undefined;
 let channel: ConfirmChannel | undefined;
@@ -18,7 +24,7 @@ async function createChannel(): Promise<ConfirmChannel> {
 
   try {
     const nextChannel = await nextConnection.createConfirmChannel();
-    await nextChannel.assertQueue(SUBMISSION_QUEUE, { durable: true });
+    await assertSubmissionTopology(nextChannel);
     await nextChannel.assertExchange(SUBMISSION_EVENTS_EXCHANGE, 'topic', { durable: false });
 
     nextConnection.on('error', (error: Error) => {
@@ -94,6 +100,44 @@ export async function publishSubmissionEvent(event: SubmissionRealtimeEvent): Pr
       realtimeRoutingKey(event),
       payload,
       { contentType: 'application/json', persistent: false, type: event.type },
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
+}
+
+export async function publishSubmissionCancellation(submissionId: string): Promise<void> {
+  const publisher = await getConfirmChannel();
+  const payload = Buffer.from(JSON.stringify({ submissionId }));
+
+  await new Promise<void>((resolve, reject) => {
+    publisher.publish(
+      SUBMISSION_CONTROL_EXCHANGE,
+      '',
+      payload,
+      { contentType: 'application/json', persistent: false, type: 'submission.cancel' },
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
+}
+
+export async function publishSubmissionDeadLetter(
+  submissionId: string,
+  reason: string,
+): Promise<void> {
+  const publisher = await getConfirmChannel();
+  const payload = Buffer.from(JSON.stringify({ submissionId }));
+
+  await new Promise<void>((resolve, reject) => {
+    publisher.sendToQueue(
+      SUBMISSION_DEAD_QUEUE,
+      payload,
+      {
+        persistent: true,
+        contentType: 'application/json',
+        messageId: submissionId,
+        type: 'submission.execute',
+        headers: { 'x-dead-letter-reason': reason, 'x-dead-lettered-at': new Date().toISOString() },
+      },
       (error) => (error ? reject(error) : resolve()),
     );
   });

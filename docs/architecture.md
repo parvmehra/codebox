@@ -17,8 +17,8 @@ Express API + Socket.IO ─────────────► PostgreSQL
 
 - **Frontend:** problem pages, authentication, Monaco editor, submission history, live status and test verdicts, and a worker status page. REST polling remains as a reconnect fallback.
 - **API:** authentication, problem access, submission validation, persistence, RabbitMQ publishing and event consumption, and authenticated Socket.IO rooms. It never executes submitted code.
-- **PostgreSQL:** source of truth for users, problems, test cases, submissions, executions, and per-test results.
-- **RabbitMQ:** durable asynchronous job delivery plus a non-durable topic exchange for lifecycle, test-progress, and worker-heartbeat events.
+- **PostgreSQL:** source of truth for users, problems, test cases, submissions, executions, per-test results, worker snapshots, and heartbeat history.
+- **RabbitMQ:** durable asynchronous job delivery, delayed bounded retries, a dead-letter queue, and a non-durable exchange for lifecycle and worker-control events.
 - **Worker:** validates and claims a queued submission, selects a language profile, compiles or syntax-checks and runs the program in Docker, persists the result, and emits progress events.
 - **Execution container:** receives only the submitted source file and test input. It has no network or host path mounts and does not receive the Docker socket.
 
@@ -30,7 +30,7 @@ Express API + Socket.IO ─────────────► PostgreSQL
 4. The worker creates an `Execution` record, runs that profile's compile or syntax-check command, and evaluates test cases in order.
 5. Each test verdict is persisted before its progress event; test input and expected output are never included in events.
 6. The API's temporary event queue forwards submission events only to the authenticated owner's Socket.IO room. The final result is persisted before the worker acknowledges the job.
-7. The frontend refreshes submission data on Socket.IO events and uses REST polling if the socket is unavailable. A worker heartbeat endpoint powers the basic status page.
+7. The frontend refreshes submission data on Socket.IO events and uses REST polling if the socket is unavailable. Persisted worker heartbeats power the status page, and the API recovers submissions whose leases expire.
 
 ## Learning notes
 

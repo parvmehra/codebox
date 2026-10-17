@@ -1,57 +1,120 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { clearWorkerStatus, getWorkerStatus, recordWorkerHeartbeat } from './worker-status.js';
+import { WorkerStatus } from '@prisma/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  workerUpsert: vi.fn(),
+  workerDeleteMany: vi.fn(),
+  heartbeatCreate: vi.fn(),
+  heartbeatDeleteMany: vi.fn(),
+  workerFindMany: vi.fn(),
+}));
+
+vi.doMock('../database/prisma.js', () => ({
+  prisma: {
+    worker: {
+      upsert: mocks.workerUpsert,
+      deleteMany: mocks.workerDeleteMany,
+      findMany: mocks.workerFindMany,
+    },
+    workerHeartbeat: {
+      create: mocks.heartbeatCreate,
+      deleteMany: mocks.heartbeatDeleteMany,
+    },
+  },
+}));
+
+const { getWorkerStatus, persistWorkerHeartbeat } = await import('./worker-status.js');
 
 const workerId = 'a25145ab-21aa-4d20-9e08-3a2b4d59110f';
 
-beforeEach(() => clearWorkerStatus());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.workerUpsert.mockResolvedValue({});
+  mocks.workerDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.heartbeatCreate.mockResolvedValue({});
+  mocks.heartbeatDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.workerFindMany.mockResolvedValue([]);
+});
 
-describe('worker status', () => {
-  it('reports offline until a fresh heartbeat arrives', () => {
-    expect(getWorkerStatus()).toEqual({
-      status: 'offline',
-      workerCount: 0,
-      activeJobs: 0,
-      lastHeartbeatAt: null,
+describe('persisted worker status', () => {
+  it('persists heartbeat history and prunes records beyond the retention window', async () => {
+    const receivedAt = new Date('2026-10-16T10:00:00.000Z');
+    await persistWorkerHeartbeat(workerId, WorkerStatus.ONLINE, 1, receivedAt);
+
+    expect(mocks.workerUpsert).toHaveBeenCalledWith({
+      where: { id: workerId },
+      create: {
+        id: workerId,
+        status: WorkerStatus.ONLINE,
+        activeJobs: 1,
+        lastHeartbeatAt: receivedAt,
+      },
+      update: { status: WorkerStatus.ONLINE, activeJobs: 1, lastHeartbeatAt: receivedAt },
+    });
+    expect(mocks.heartbeatCreate).toHaveBeenCalledWith({
+      data: {
+        workerId,
+        status: WorkerStatus.ONLINE,
+        activeJobs: 1,
+        recordedAt: receivedAt,
+      },
+    });
+    expect(mocks.heartbeatDeleteMany).toHaveBeenCalledWith({
+      where: { recordedAt: { lt: new Date('2026-10-09T10:00:00.000Z') } },
+    });
+    expect(mocks.workerDeleteMany).toHaveBeenCalledWith({
+      where: { lastHeartbeatAt: { lt: new Date('2026-10-09T10:00:00.000Z') } },
     });
   });
 
-  it('aggregates active workers and marks stale or stopped workers offline', () => {
-    recordWorkerHeartbeat(
+  it('reports only fresh online workers and uses persisted heartbeat time', async () => {
+    mocks.workerFindMany.mockResolvedValue([
       {
-        type: 'worker:heartbeat',
-        workerId,
-        status: 'online',
-        activeJobs: 1,
-        sentAt: '2026-10-16T10:00:00.000Z',
+        id: workerId,
+        status: WorkerStatus.ONLINE,
+        activeJobs: 2,
+        lastHeartbeatAt: new Date('2026-10-16T10:00:00.000Z'),
       },
-      1_000,
-    );
-    expect(getWorkerStatus(45_999)).toMatchObject({
+      {
+        id: '48a6a0a4-828e-4ea0-a9ec-60509f663ca5',
+        status: WorkerStatus.OFFLINE,
+        activeJobs: 0,
+        lastHeartbeatAt: new Date('2026-10-16T10:00:01.000Z'),
+      },
+      {
+        id: 'a2cfc83e-d5b6-4359-8783-dca879f3c215',
+        status: WorkerStatus.ONLINE,
+        activeJobs: 8,
+        lastHeartbeatAt: new Date('2026-10-16T09:58:00.000Z'),
+      },
+    ]);
+
+    await expect(getWorkerStatus(new Date('2026-10-16T10:00:02.000Z'))).resolves.toEqual({
       status: 'online',
       workerCount: 1,
-      activeJobs: 1,
+      activeJobs: 2,
+      lastHeartbeatAt: '2026-10-16T10:00:01.000Z',
     });
-    expect(getWorkerStatus(46_001)).toMatchObject({
-      status: 'offline',
-      workerCount: 0,
-      activeJobs: 0,
+    expect(mocks.workerFindMany).toHaveBeenCalledWith({
+      orderBy: { lastHeartbeatAt: 'desc' },
+      select: { id: true, status: true, activeJobs: true, lastHeartbeatAt: true },
     });
+  });
 
-    recordWorkerHeartbeat(
+  it('reports offline when every persisted heartbeat is stale', async () => {
+    mocks.workerFindMany.mockResolvedValue([
       {
-        type: 'worker:heartbeat',
-        workerId,
-        status: 'offline',
-        activeJobs: 0,
-        sentAt: '2026-10-16T10:00:46.000Z',
+        id: workerId,
+        status: WorkerStatus.ONLINE,
+        activeJobs: 1,
+        lastHeartbeatAt: new Date('2026-10-16T09:58:00.000Z'),
       },
-      46_000,
-    );
-    expect(getWorkerStatus(46_001)).toMatchObject({
+    ]);
+    await expect(getWorkerStatus(new Date('2026-10-16T10:00:00.000Z'))).resolves.toMatchObject({
       status: 'offline',
       workerCount: 0,
       activeJobs: 0,
-      lastHeartbeatAt: '2026-10-16T10:00:46.000Z',
+      lastHeartbeatAt: '2026-10-16T09:58:00.000Z',
     });
   });
 });

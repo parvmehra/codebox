@@ -19,7 +19,7 @@ The transition table is enforced by `server/src/modules/submissions/state-machin
 ## Worker steps
 
 1. Consume a RabbitMQ message containing a submission ID.
-2. Claim the submission only while its status is `QUEUED`.
+2. Claim the submission only while its status is `QUEUED`, increment its attempt count, and acquire a time-limited lease.
 3. Resolve the language profile and load the problem's test cases.
 4. Create an execution record with the profile's runtime version, image, and configured resource limits.
 5. Create a fresh container and stream the source into its private `/workspace` tmpfs.
@@ -28,7 +28,11 @@ The transition table is enforced by `server/src/modules/submissions/state-machin
 8. Normalize line endings and whitespace before comparing output.
 9. Persist each verdict, publish test progress, and publish the final submission state; remove the container, then acknowledge the message.
 
-The API forwards queued, lifecycle, test-progress, and final events from a temporary RabbitMQ topic queue to the authenticated owner's Socket.IO room. The browser invalidates its REST query on each matching event and polls periodically as a reconnect fallback. The worker also publishes a heartbeat every 15 seconds; the status endpoint treats it as stale after 45 seconds.
+Transient worker or database failures release the current lease and use a confirmed RabbitMQ copy in the delayed retry queue. Three execution attempts are allowed; invalid or exhausted messages go to the durable dead-letter queue. If a process disappears, the API recovery loop resets an expired lease and dispatches a new attempt, unless the attempt budget is exhausted.
+
+The API forwards queued, lifecycle, test-progress, and final events from a temporary RabbitMQ topic queue to the authenticated owner's Socket.IO room. The browser invalidates its REST query on each matching event and polls periodically as a reconnect fallback. The worker persists heartbeat snapshots and history every 15 seconds; the status endpoint treats a heartbeat as stale after 45 seconds.
+
+Users can cancel their own queued or running submissions. The API commits `CANCELLED` in PostgreSQL, emits an owner-only status event, and signals workers to abort the Docker process. Workers also poll the database so cancellation survives a missed transient control event.
 
 The result API returns test number, verdict, runtime, compiler diagnostics, and a generic runtime error. Socket.IO events contain only status and per-test verdict metadata. Neither interface returns test input, expected output, or submitted-program stderr, including for hidden cases.
 

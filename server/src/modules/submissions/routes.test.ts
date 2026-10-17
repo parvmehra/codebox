@@ -19,6 +19,7 @@ vi.doMock('../../database/prisma.js', () => ({
 vi.doMock('../../queue/submissions.js', () => ({
   publishSubmission: vi.fn(),
   publishSubmissionEvent: vi.fn(),
+  publishSubmissionCancellation: vi.fn(),
 }));
 
 process.env.DATABASE_URL ??= 'postgresql://test:test@localhost:5432/test';
@@ -26,7 +27,8 @@ process.env.JWT_SECRET ??= 'test-secret-for-submission-api-tests-only-32';
 
 const { env } = await import('../../config/env.js');
 const { prisma } = await import('../../database/prisma.js');
-const { publishSubmission, publishSubmissionEvent } = await import('../../queue/submissions.js');
+const { publishSubmission, publishSubmissionEvent, publishSubmissionCancellation } =
+  await import('../../queue/submissions.js');
 const { app } = await import('../../app.js');
 
 const userId = 'a25145ab-21aa-4d20-9e08-3a2b4d59110f';
@@ -208,5 +210,50 @@ describe('submission API', () => {
     ]);
     expect(body.data).not.toHaveProperty('input');
     expect(body.data).not.toHaveProperty('expectedOut');
+  });
+
+  it('cancels an owned queued submission and signals active workers', async () => {
+    vi.mocked(prisma.submission.findFirst).mockResolvedValue({
+      id: submissionId,
+      status: SubmissionStatus.QUEUED,
+      updatedAt: new Date('2026-10-16T10:00:00.000Z'),
+    } as never);
+    vi.mocked(prisma.submission.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(publishSubmissionEvent).mockResolvedValue(undefined);
+    vi.mocked(publishSubmissionCancellation).mockResolvedValue(undefined);
+
+    const response = await fetch(`${baseUrl}/api/submissions/${submissionId}/cancel`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      data: { id: submissionId, status: SubmissionStatus.CANCELLED },
+    });
+    expect(prisma.submission.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: submissionId,
+        userId,
+        status: { in: ['QUEUED', 'ASSIGNED', 'STARTING', 'COMPILING', 'RUNNING'] },
+      },
+      data: {
+        status: SubmissionStatus.CANCELLED,
+        errorMessage: null,
+        workerId: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        needsDispatch: false,
+      },
+    });
+    expect(publishSubmissionCancellation).toHaveBeenCalledWith(submissionId);
+    expect(publishSubmissionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'submission:cancelled',
+        submissionId,
+        userId,
+        status: SubmissionStatus.CANCELLED,
+      }),
+    );
   });
 });

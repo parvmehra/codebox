@@ -36,23 +36,29 @@ export type ExecutionResult = {
 export type ExecuteSubmissionOptions = {
   sourceCode: string;
   testCases: ExecutionTestCase[];
+  signal?: AbortSignal;
   onPhase: (status: Extract<SubmissionStatus, 'COMPILING' | 'RUNNING'>) => Promise<void>;
   onTestResult: (result: PersistedTestResult) => Promise<void>;
 };
 
-type DockerCommandResult = {
+export type DockerCommandResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
   outputLimitExceeded: boolean;
 };
 
-type DockerCommandOptions = {
+export type DockerCommandOptions = {
   input?: string;
   timeoutMs: number;
   outputLimitBytes?: number;
   containerId?: string;
+  signal?: AbortSignal;
 };
+export type DockerCommandRunner = (
+  args: string[],
+  options: DockerCommandOptions,
+) => Promise<DockerCommandResult>;
 
 export class DockerCommandError extends Error {
   constructor(message: string) {
@@ -65,6 +71,13 @@ export class DockerCommandTimeoutError extends DockerCommandError {
   constructor(command: string) {
     super(`Docker command exceeded its ${command} watchdog.`);
     this.name = 'DockerCommandTimeoutError';
+  }
+}
+
+export class DockerCommandAbortedError extends DockerCommandError {
+  constructor() {
+    super('Docker command was stopped because submission processing was interrupted.');
+    this.name = 'DockerCommandAbortedError';
   }
 }
 
@@ -143,6 +156,7 @@ async function ensureLanguageImage(profile: LanguageProfile): Promise<void> {
 export async function executeSubmission(
   profile: LanguageProfile,
   options: ExecuteSubmissionOptions,
+  runCommand: DockerCommandRunner = runDocker,
 ): Promise<ExecutionResult> {
   if (Buffer.byteLength(options.sourceCode, 'utf8') > profile.sourceLimitBytes) {
     throw new SourceSizeLimitError(profile.sourceLimitBytes);
@@ -152,30 +166,35 @@ export async function executeSubmission(
   let containerId: string | undefined;
 
   try {
-    const create = await runDocker(buildSandboxCreateArgs(containerName, profile), {
+    const create = await runCommand(buildSandboxCreateArgs(containerName, profile), {
       timeoutMs: 30_000,
+      signal: options.signal,
     });
     requireDockerSuccess(create, 'create isolated execution container');
     containerId = create.stdout.trim();
     if (!containerId)
       throw new DockerCommandError('Docker did not return the execution container ID.');
 
-    const start = await runDocker(['start', containerId], { timeoutMs: 30_000 });
+    const start = await runCommand(['start', containerId], {
+      timeoutMs: 30_000,
+      signal: options.signal,
+    });
     requireDockerSuccess(start, 'start isolated execution container');
 
-    const writeSource = await runDocker(
+    const writeSource = await runCommand(
       ['exec', '-i', containerId, 'sh', '-c', `cat > /workspace/${profile.sourceFileName}`],
-      { input: options.sourceCode, timeoutMs: 30_000 },
+      { input: options.sourceCode, timeoutMs: 30_000, signal: options.signal },
     );
     requireDockerSuccess(writeSource, 'write source into isolated execution container');
 
     await options.onPhase(SubmissionStatus.COMPILING);
-    const compile = await runDocker(
+    const compile = await runCommand(
       ['exec', containerId, ...withTimeout(profile.compileCommand, profile.compileLimitMs)],
       {
         timeoutMs: profile.compileLimitMs + 10_000,
         outputLimitBytes: profile.outputLimitBytes,
         containerId,
+        signal: options.signal,
       },
     );
 
@@ -187,7 +206,11 @@ export async function executeSubmission(
       );
     }
     if (compile.exitCode === 124 || compile.exitCode === 137) {
-      const outOfMemory = await containerWasOutOfMemoryKilled(containerId);
+      const outOfMemory = await containerWasOutOfMemoryKilled(
+        containerId,
+        options.signal,
+        runCommand,
+      );
       return completedResult(
         outOfMemory ? SubmissionStatus.MEMORY_LIMIT_EXCEEDED : SubmissionStatus.TIME_LIMIT_EXCEEDED,
         null,
@@ -212,13 +235,14 @@ export async function executeSubmission(
 
     for (const [index, testCase] of options.testCases.entries()) {
       const startedAt = performance.now();
-      const run = await runDocker(
+      const run = await runCommand(
         ['exec', '-i', containerId, ...withTimeout(profile.runCommand, profile.timeLimitMs)],
         {
           input: testCase.input,
           timeoutMs: profile.timeLimitMs + 10_000,
           outputLimitBytes: profile.outputLimitBytes,
           containerId,
+          signal: options.signal,
         },
       );
       const executionTimeMs = Math.max(0, Math.round(performance.now() - startedAt));
@@ -230,7 +254,11 @@ export async function executeSubmission(
         status = TestResultStatus.RUNTIME_ERROR;
         errorMessage = 'Program output exceeded the configured output limit.';
       } else if (run.exitCode === 124 || run.exitCode === 137) {
-        const outOfMemory = await containerWasOutOfMemoryKilled(containerId);
+        const outOfMemory = await containerWasOutOfMemoryKilled(
+          containerId,
+          options.signal,
+          runCommand,
+        );
         status = outOfMemory
           ? TestResultStatus.MEMORY_LIMIT_EXCEEDED
           : TestResultStatus.TIME_LIMIT_EXCEEDED;
@@ -265,17 +293,15 @@ export async function executeSubmission(
     return completedResult(SubmissionStatus.ACCEPTED, totalExecutionTimeMs, null);
   } finally {
     try {
-      if (containerId) {
-        const cleanup = await runDocker(['rm', '--force', containerId], { timeoutMs: 15_000 });
-        if (cleanup.exitCode !== 0) {
-          console.error(
-            { containerId, error: cleanup.stderr },
-            'Could not remove execution container',
-          );
-        }
+      const cleanup = await runCommand(['rm', '--force', containerName], { timeoutMs: 15_000 });
+      if (cleanup.exitCode !== 0 && !cleanup.stderr.includes('No such container')) {
+        console.error(
+          { containerName, error: cleanup.stderr },
+          'Could not remove execution container',
+        );
       }
     } catch (error) {
-      console.error({ containerId, error }, 'Could not clean up execution container');
+      console.error({ containerName, error }, 'Could not clean up execution container');
     }
   }
 }
@@ -298,9 +324,14 @@ function limitMessage(message: string | null | undefined): string | null {
   return trimmed.slice(0, ERROR_MESSAGE_LIMIT);
 }
 
-async function containerWasOutOfMemoryKilled(containerId: string): Promise<boolean> {
-  const result = await runDocker(['inspect', '--format={{.State.OOMKilled}}', containerId], {
+async function containerWasOutOfMemoryKilled(
+  containerId: string,
+  signal?: AbortSignal,
+  runCommand: DockerCommandRunner = runDocker,
+): Promise<boolean> {
+  const result = await runCommand(['inspect', '--format={{.State.OOMKilled}}', containerId], {
     timeoutMs: 10_000,
+    signal,
   });
   requireDockerSuccess(result, 'inspect execution container memory status');
   return result.stdout.trim() === 'true';
@@ -316,63 +347,83 @@ function requireDockerSuccess(result: DockerCommandResult, label: string): void 
   if (result.exitCode !== 0) throw commandExecutionError(label, result);
 }
 
-function runDocker(args: string[], options: DockerCommandOptions): Promise<DockerCommandResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    const outputLimitBytes = options.outputLimitBytes ?? INTERNAL_OUTPUT_LIMIT_BYTES;
-    let outputBytes = 0;
-    let outputLimitExceeded = false;
-    let watchdogExpired = false;
-    let completed = false;
-
-    const stopContainer = () => {
-      if (options.containerId) {
-        void runDocker(['kill', options.containerId], { timeoutMs: 5_000 }).catch(() => undefined);
-      }
-      child.kill();
-    };
-
-    const capture = (target: Buffer[], chunk: Buffer) => {
-      const remaining = Math.max(0, outputLimitBytes - outputBytes);
-      if (remaining > 0) target.push(chunk.subarray(0, remaining));
-      outputBytes += chunk.length;
-      if (outputBytes > outputLimitBytes && !outputLimitExceeded) {
-        outputLimitExceeded = true;
-        stopContainer();
-      }
-    };
-
-    const timer = setTimeout(() => {
-      watchdogExpired = true;
-      stopContainer();
-    }, options.timeoutMs);
-
-    const finish = (error?: Error, code?: number | null) => {
-      if (completed) return;
-      completed = true;
-      clearTimeout(timer);
-      if (error) {
-        reject(error);
-        return;
-      }
-      if (watchdogExpired) {
-        reject(new DockerCommandTimeoutError(args[0] ?? 'unknown Docker command'));
-        return;
-      }
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-        outputLimitExceeded,
+export function createDockerCommandRunner(spawnChild: typeof spawn = spawn): DockerCommandRunner {
+  const runCommand: DockerCommandRunner = (args, options) =>
+    new Promise((resolve, reject) => {
+      const child = spawnChild('docker', args, {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
-    };
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      const outputLimitBytes = options.outputLimitBytes ?? INTERNAL_OUTPUT_LIMIT_BYTES;
+      let outputBytes = 0;
+      let outputLimitExceeded = false;
+      let watchdogExpired = false;
+      let completed = false;
+      let abort = () => undefined;
 
-    child.stdout.on('data', (chunk: Buffer) => capture(stdout, chunk));
-    child.stderr.on('data', (chunk: Buffer) => capture(stderr, chunk));
-    child.once('error', (error) => finish(new DockerCommandError(error.message)));
-    child.once('close', (code) => finish(undefined, code));
-    child.stdin.end(options.input ?? '');
-  });
+      const stopContainer = () => {
+        if (options.containerId) {
+          void runCommand(['kill', options.containerId], { timeoutMs: 5_000 }).catch(
+            () => undefined,
+          );
+        }
+        child.kill();
+      };
+
+      const capture = (target: Buffer[], chunk: Buffer) => {
+        const remaining = Math.max(0, outputLimitBytes - outputBytes);
+        if (remaining > 0) target.push(chunk.subarray(0, remaining));
+        outputBytes += chunk.length;
+        if (outputBytes > outputLimitBytes && !outputLimitExceeded) {
+          outputLimitExceeded = true;
+          stopContainer();
+        }
+      };
+
+      const timer = setTimeout(() => {
+        watchdogExpired = true;
+        stopContainer();
+      }, options.timeoutMs);
+
+      const finish = (error?: Error, code?: number | null) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (watchdogExpired) {
+          reject(new DockerCommandTimeoutError(args[0] ?? 'unknown Docker command'));
+          return;
+        }
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+          outputLimitExceeded,
+        });
+      };
+
+      child.stdout.on('data', (chunk: Buffer) => capture(stdout, chunk));
+      child.stderr.on('data', (chunk: Buffer) => capture(stderr, chunk));
+      child.once('error', (error) => finish(new DockerCommandError(error.message)));
+      child.once('close', (code) => finish(undefined, code));
+      abort = () => {
+        stopContainer();
+        finish(new DockerCommandAbortedError());
+      };
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (options.signal?.aborted) {
+        abort();
+        return;
+      }
+      child.stdin.end(options.input ?? '');
+    });
+  return runCommand;
 }
+
+const runDocker: DockerCommandRunner = createDockerCommandRunner();

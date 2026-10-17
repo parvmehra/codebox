@@ -30,7 +30,7 @@ vi.doMock('./docker-executor.js', () => ({
   SourceSizeLimitError: class SourceSizeLimitError extends Error {},
 }));
 
-const { processSubmission } = await import('./processor.js');
+const { processSubmission, RetryableSubmissionError } = await import('./processor.js');
 
 const submissionId = 'c3070e38-c557-43d5-a59b-e8af46675370';
 const executionId = '48a6a0a4-828e-4ea0-a9ec-60509f663ca5';
@@ -40,9 +40,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.submissionUpdateMany.mockResolvedValue({ count: 1 });
   mocks.submissionFindUnique.mockResolvedValue({
+    status: SubmissionStatus.ASSIGNED,
     userId: 'a25145ab-21aa-4d20-9e08-3a2b4d59110f',
     language: SubmissionLanguage.JAVA,
     sourceCode: 'public class Main {}',
+    attemptCount: 1,
     problem: { testCases: [{ id: testCaseId, input: '1', expectedOut: '1' }] },
   });
   mocks.executionCreate.mockResolvedValue({ id: executionId });
@@ -72,7 +74,11 @@ describe('submission worker processor', () => {
     const result = await processSubmission(submissionId, mocks.publishEvent);
 
     expect(result).toEqual({ processed: true, status: SubmissionStatus.ACCEPTED });
-    expect(mocks.submissionUpdateMany.mock.calls.map(([args]) => args.data.status)).toEqual([
+    expect(
+      mocks.submissionUpdateMany.mock.calls
+        .map(([args]) => args.data.status)
+        .filter((status) => status !== undefined),
+    ).toEqual([
       SubmissionStatus.ASSIGNED,
       SubmissionStatus.STARTING,
       SubmissionStatus.COMPILING,
@@ -121,18 +127,21 @@ describe('submission worker processor', () => {
     expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('expectedOut');
   });
 
-  it('marks Docker or persistence failures as system errors without exposing details', async () => {
+  it('releases a lease after Docker or persistence failures so RabbitMQ can retry', async () => {
     mocks.executeSubmission.mockRejectedValue(new Error('private daemon address'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const result = await processSubmission(submissionId, mocks.publishEvent);
+    await expect(processSubmission(submissionId, mocks.publishEvent)).rejects.toBeInstanceOf(
+      RetryableSubmissionError,
+    );
 
-    expect(result).toEqual({ processed: true, status: SubmissionStatus.SYSTEM_ERROR });
     expect(mocks.submissionUpdateMany.mock.calls.at(-1)?.[0]).toMatchObject({
       where: { id: submissionId, status: SubmissionStatus.STARTING },
       data: {
-        status: SubmissionStatus.SYSTEM_ERROR,
-        errorMessage: 'The worker could not complete this submission.',
+        status: SubmissionStatus.QUEUED,
+        workerId: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
       },
     });
     expect(mocks.executionUpdate).toHaveBeenCalledWith({
@@ -140,9 +149,8 @@ describe('submission worker processor', () => {
       data: { completedAt: expect.any(Date) },
     });
     expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).toMatchObject({
-      type: 'submission:failed',
-      status: SubmissionStatus.SYSTEM_ERROR,
-      errorMessage: 'The worker could not complete this submission.',
+      type: 'submission:queued',
+      status: SubmissionStatus.QUEUED,
     });
   });
 
@@ -177,17 +185,32 @@ describe('submission worker processor', () => {
     });
   });
 
-  it('does not start a second execution for a message whose submission is already terminal', async () => {
-    mocks.submissionUpdateMany.mockResolvedValueOnce({ count: 0 });
-    mocks.submissionFindUnique.mockResolvedValueOnce({
-      status: SubmissionStatus.ACCEPTED,
-      language: SubmissionLanguage.JAVA,
-    });
+  it.each([SubmissionStatus.ASSIGNED, SubmissionStatus.RUNNING, SubmissionStatus.ACCEPTED])(
+    'does not start a second execution for a duplicate delivery in %s',
+    async (status) => {
+      mocks.submissionUpdateMany.mockResolvedValueOnce({ count: 0 });
+      mocks.submissionFindUnique.mockResolvedValueOnce({
+        status,
+        attemptCount: 1,
+        userId: 'a25145ab-21aa-4d20-9e08-3a2b4d59110f',
+      });
 
-    const result = await processSubmission(submissionId);
+      const result = await processSubmission(submissionId);
 
-    expect(result).toEqual({ processed: false, status: SubmissionStatus.ACCEPTED });
-    expect(mocks.executionCreate).not.toHaveBeenCalled();
-    expect(mocks.executeSubmission).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual({ processed: false, status });
+      expect(mocks.submissionUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: submissionId,
+          status: SubmissionStatus.QUEUED,
+          attemptCount: { lt: 3 },
+        },
+        data: expect.objectContaining({
+          status: SubmissionStatus.ASSIGNED,
+          attemptCount: { increment: 1 },
+        }),
+      });
+      expect(mocks.executionCreate).not.toHaveBeenCalled();
+      expect(mocks.executeSubmission).not.toHaveBeenCalled();
+    },
+  );
 });

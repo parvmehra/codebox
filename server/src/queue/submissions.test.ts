@@ -31,8 +31,14 @@ vi.doMock('amqplib', () => ({ default: { connect } }));
 process.env.DATABASE_URL ??= 'postgresql://test:test@localhost:5432/test';
 process.env.JWT_SECRET ??= 'test-secret-for-submission-api-tests-only-32';
 
-const { closeSubmissionPublisher, publishSubmission, publishSubmissionEvent, SUBMISSION_QUEUE } =
-  await import('./submissions.js');
+const {
+  closeSubmissionPublisher,
+  publishSubmission,
+  publishSubmissionEvent,
+  publishSubmissionCancellation,
+  publishSubmissionDeadLetter,
+  SUBMISSION_QUEUE,
+} = await import('./submissions.js');
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -46,6 +52,18 @@ describe('submission queue publisher', () => {
 
     expect(connect).toHaveBeenCalledOnce();
     expect(fakeChannel.assertQueue).toHaveBeenCalledWith(SUBMISSION_QUEUE, { durable: true });
+    expect(fakeChannel.assertQueue).toHaveBeenCalledWith('submissions.retry', {
+      durable: true,
+      arguments: {
+        'x-message-ttl': 5_000,
+        'x-dead-letter-exchange': '',
+        'x-dead-letter-routing-key': SUBMISSION_QUEUE,
+      },
+    });
+    expect(fakeChannel.assertQueue).toHaveBeenCalledWith('submissions.dead', { durable: true });
+    expect(fakeChannel.assertExchange).toHaveBeenCalledWith('submissions.control', 'fanout', {
+      durable: false,
+    });
     expect(fakeChannel.assertExchange).toHaveBeenCalledWith('submissions.events', 'topic', {
       durable: false,
     });
@@ -100,6 +118,44 @@ describe('submission queue publisher', () => {
       contentType: 'application/json',
       persistent: false,
       type: 'submission:queued',
+    });
+  });
+
+  it('publishes a best-effort cancellation signal to workers', async () => {
+    const submissionId = 'c3070e38-c557-43d5-a59b-e8af46675370';
+    await publishSubmissionCancellation(submissionId);
+
+    const [exchange, routingKey, content, options] = publish.mock.calls[0] as [
+      string,
+      string,
+      Buffer,
+      Record<string, unknown>,
+    ];
+    expect(exchange).toBe('submissions.control');
+    expect(routingKey).toBe('');
+    expect(JSON.parse(content.toString())).toEqual({ submissionId });
+    expect(options).toMatchObject({
+      persistent: false,
+      contentType: 'application/json',
+      type: 'submission.cancel',
+    });
+  });
+
+  it('durably parks stale submissions that exhaust their processing attempts', async () => {
+    const submissionId = 'c3070e38-c557-43d5-a59b-e8af46675370';
+    await publishSubmissionDeadLetter(submissionId, 'stale-attempt-limit');
+
+    const [queue, content, options] = sendToQueue.mock.calls[0] as [
+      string,
+      Buffer,
+      Record<string, unknown>,
+    ];
+    expect(queue).toBe('submissions.dead');
+    expect(JSON.parse(content.toString())).toEqual({ submissionId });
+    expect(options).toMatchObject({
+      persistent: true,
+      messageId: submissionId,
+      headers: { 'x-dead-letter-reason': 'stale-attempt-limit' },
     });
   });
 });

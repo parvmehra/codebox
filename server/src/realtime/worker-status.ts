@@ -1,39 +1,50 @@
-import type { RealtimeEvent } from './events.js';
+import { WorkerStatus } from '@prisma/client';
+import { prisma } from '../database/prisma.js';
 
 const HEARTBEAT_TTL_MS = 45_000;
-type WorkerHeartbeat = Extract<RealtimeEvent, { type: 'worker:heartbeat' }>;
+const HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
-const workers = new Map<string, { heartbeat: WorkerHeartbeat; receivedAt: number }>();
+export async function persistWorkerHeartbeat(
+  workerId: string,
+  status: WorkerStatus,
+  activeJobs: number,
+  receivedAt = new Date(),
+): Promise<void> {
+  await prisma.worker.upsert({
+    where: { id: workerId },
+    create: { id: workerId, status, activeJobs, lastHeartbeatAt: receivedAt },
+    update: { status, activeJobs, lastHeartbeatAt: receivedAt },
+  });
 
-export function recordWorkerHeartbeat(heartbeat: WorkerHeartbeat, receivedAt = Date.now()): void {
-  for (const [workerId, record] of workers) {
-    if (receivedAt - record.receivedAt > HEARTBEAT_TTL_MS * 4) workers.delete(workerId);
-  }
-  workers.set(heartbeat.workerId, { heartbeat, receivedAt });
+  await prisma.workerHeartbeat.create({
+    data: { workerId, status, activeJobs, recordedAt: receivedAt },
+  });
+  const historyCutoff = new Date(receivedAt.getTime() - HISTORY_RETENTION_MS);
+  await prisma.workerHeartbeat.deleteMany({ where: { recordedAt: { lt: historyCutoff } } });
+  await prisma.worker.deleteMany({ where: { lastHeartbeatAt: { lt: historyCutoff } } });
 }
 
-export function getWorkerStatus(now = Date.now()) {
-  const records = [...workers.values()];
-  const online = records.filter(
-    ({ heartbeat, receivedAt }) =>
-      heartbeat.status === 'online' && now - receivedAt <= HEARTBEAT_TTL_MS,
+export async function getWorkerStatus(now = new Date()) {
+  const workers = await prisma.worker.findMany({
+    orderBy: { lastHeartbeatAt: 'desc' },
+    select: { id: true, status: true, activeJobs: true, lastHeartbeatAt: true },
+  });
+  const online = workers.filter(
+    ({ status, lastHeartbeatAt }) =>
+      status === WorkerStatus.ONLINE &&
+      now.getTime() - lastHeartbeatAt.getTime() <= HEARTBEAT_TTL_MS,
   );
-  const mostRecent = records.reduce<{ sentAt: string; receivedAt: number } | undefined>(
-    (latest, record) =>
-      !latest || record.receivedAt > latest.receivedAt
-        ? { sentAt: record.heartbeat.sentAt, receivedAt: record.receivedAt }
-        : latest,
+
+  const mostRecent = workers.reduce<Date | undefined>(
+    (latest, worker) =>
+      !latest || worker.lastHeartbeatAt > latest ? worker.lastHeartbeatAt : latest,
     undefined,
   );
 
   return {
     status: online.length > 0 ? ('online' as const) : ('offline' as const),
     workerCount: online.length,
-    activeJobs: online.reduce((total, { heartbeat }) => total + heartbeat.activeJobs, 0),
-    lastHeartbeatAt: mostRecent?.sentAt ?? null,
+    activeJobs: online.reduce((total, { activeJobs }) => total + activeJobs, 0),
+    lastHeartbeatAt: mostRecent?.toISOString() ?? null,
   };
-}
-
-export function clearWorkerStatus(): void {
-  workers.clear();
 }

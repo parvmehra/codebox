@@ -58,6 +58,18 @@ async function waitForSubmission(submissionId, token, timeoutMs = 180_000) {
   throw new Error(`Submission ${submissionId} did not finish within ${timeoutMs} ms.`);
 }
 
+async function waitForSubmissionStatus(submissionId, token, expectedStatus, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { data } = await request(`/submissions/${submissionId}`, { token });
+    if (data.status === expectedStatus) return data;
+    await delay(100);
+  }
+  throw new Error(
+    `Submission ${submissionId} did not reach ${expectedStatus} within ${timeoutMs} ms.`,
+  );
+}
+
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function connectSocket(token) {
@@ -253,6 +265,36 @@ try {
       assert.equal(Object.hasOwn(event, 'sourceCode'), false);
     }
   }
+
+  const cancellable = await request('/submissions', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({
+      problemId: problem.id,
+      language: 'NODEJS',
+      sourceCode: 'while (true) {}',
+    }),
+  });
+  await waitForSubmissionStatus(cancellable.data.id, token, 'RUNNING');
+  const cancellation = await request(`/submissions/${cancellable.data.id}/cancel`, {
+    method: 'POST',
+    token,
+  });
+  assert.equal(cancellation.data.status, 'CANCELLED');
+  await waitForSubmissionStatus(cancellable.data.id, token, 'CANCELLED');
+
+  const cancelledEvents = submissionEvents.filter(
+    (event) => event.submissionId === cancellable.data.id,
+  );
+  assert.ok(
+    cancelledEvents.some((event) => event.type === 'submission:cancelled'),
+    'The owner should receive the cancellation event.',
+  );
+  assert.equal(
+    otherUserEvents.some((event) => event.submissionId === cancellable.data.id),
+    false,
+    'Another user must not receive cancellation events.',
+  );
 
   await delay(250);
   assert.deepEqual(otherUserEvents, [], 'Another user must not receive submission events.');

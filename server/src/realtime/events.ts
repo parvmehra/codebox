@@ -17,6 +17,7 @@ const submissionStateEvent = z.object({
     'submission:running',
     'submission:completed',
     'submission:failed',
+    'submission:cancelled',
   ]),
   ...submissionIdentity,
   errorMessage: z.string().max(4_000).optional(),

@@ -3,7 +3,6 @@ import type { Channel, ChannelModel } from 'amqplib';
 import type { Server } from 'socket.io';
 import { runtimeEnv } from '../config/runtime-env.js';
 import { realtimeEventSchema, SUBMISSION_EVENTS_EXCHANGE } from './events.js';
-import { recordWorkerHeartbeat } from './worker-status.js';
 
 export async function startRealtimeEventConsumer(io: Server): Promise<() => Promise<void>> {
   const connection: ChannelModel = await amqp.connect(runtimeEnv.RABBITMQ_URL);
@@ -31,10 +30,7 @@ export async function startRealtimeEventConsumer(io: Server): Promise<() => Prom
         }
 
         const event = parsed.data;
-        if (event.type === 'worker:heartbeat') {
-          recordWorkerHeartbeat(event);
-          return;
-        }
+        if (event.type === 'worker:heartbeat') return;
 
         const { userId, ...clientEvent } = event;
         io.to(`user:${userId}`).emit(event.type, clientEvent);
