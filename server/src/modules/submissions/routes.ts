@@ -1,4 +1,4 @@
-import { SubmissionLanguage, SubmissionStatus } from '@prisma/client';
+import { Role, SubmissionLanguage, SubmissionStatus } from '@prisma/client';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.js';
@@ -14,6 +14,7 @@ import { HttpError } from '../../utils/http-error.js';
 const createSubmissionInput = z.object({
   problemId: z.string().uuid(),
   language: z.nativeEnum(SubmissionLanguage),
+  priority: z.number().int().min(0).max(10).default(0),
   sourceCode: z
     .string()
     .min(1)
@@ -39,6 +40,9 @@ export const submissionsRouter = Router();
 
 submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, response) => {
   const input = createSubmissionInput.parse(request.body);
+  if (input.priority > 0 && request.user!.role !== Role.ADMIN) {
+    throw new HttpError(403, 'INSUFFICIENT_ROLE', 'Only admins can set submission priority.');
+  }
   const problem = await prisma.problem.findFirst({
     where: { id: input.problemId, isPublished: true },
     select: { id: true },
@@ -52,8 +56,9 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
       problemId: problem.id,
       language: input.language,
       sourceCode: input.sourceCode,
+      priority: input.priority,
     },
-    select: { id: true, status: true, language: true, createdAt: true },
+    select: { id: true, status: true, language: true, priority: true, createdAt: true },
   });
 
   try {
@@ -69,7 +74,7 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
   }
 
   try {
-    await publishSubmission(submission.id);
+    await publishSubmission(submission.id, submission.priority);
   } catch (error) {
     console.error({ error, submissionId: submission.id }, 'Could not publish submission job');
     assertSubmissionTransition(SubmissionStatus.QUEUED, SubmissionStatus.SYSTEM_ERROR);

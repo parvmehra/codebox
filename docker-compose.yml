@@ -39,6 +39,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-code_platform}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-code_platform}?schema=public
       JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-before-production}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-code_platform}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672
+      SCHEDULER_STRATEGY: ${SCHEDULER_STRATEGY:-FIFO}
       PORT: 4000
       CLIENT_ORIGIN: http://localhost:5173
     ports:
@@ -56,6 +57,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-code_platform}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-code_platform}?schema=public
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-code_platform}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672
+      WORKER_LANGUAGES: ${WORKER_LANGUAGES:-JAVA,PYTHON,CPP,NODEJS}
     volumes:
       - type: bind
         source: /var/run/docker.sock

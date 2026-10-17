@@ -18,15 +18,16 @@ The transition table is enforced by `server/src/modules/submissions/state-machin
 
 ## Worker steps
 
-1. Consume a RabbitMQ message containing a submission ID.
-2. Claim the submission only while its status is `QUEUED`, increment its attempt count, and acquire a time-limited lease.
-3. Resolve the language profile and load the problem's test cases.
-4. Create an execution record with the profile's runtime version, image, and configured resource limits.
-5. Create a fresh container and stream the source into its private `/workspace` tmpfs.
-6. Run the profile's compile or syntax-check command. C++ writes its compiled binary to a separate executable tmpfs.
-7. Run the program once per test case, passing each input through standard input.
-8. Normalize line endings and whitespace before comparing output.
-9. Persist each verdict, publish test progress, and publish the final submission state; remove the container, then acknowledge the message.
+1. The API scheduler consumes a durable ingress message, matches its language to fresh worker capabilities, and selects the least-loaded eligible capability queue.
+2. A matching worker consumes a RabbitMQ message containing the submission ID.
+3. Claim the submission only while its status is `QUEUED`, increment its attempt count, and acquire a time-limited lease.
+4. Resolve the language profile and load the problem's test cases.
+5. Create an execution record with the profile's runtime version, image, and configured resource limits.
+6. Create a fresh container and stream the source into its private `/workspace` tmpfs.
+7. Run the profile's compile or syntax-check command. C++ writes its compiled binary to a separate executable tmpfs.
+8. Run the program once per test case, passing each input through standard input.
+9. Normalize line endings and whitespace before comparing output.
+10. Persist each verdict, publish test progress, and publish the final submission state; remove the container, then acknowledge the message.
 
 Transient worker or database failures release the current lease and use a confirmed RabbitMQ copy in the delayed retry queue. Three execution attempts are allowed; invalid or exhausted messages go to the durable dead-letter queue. If a process disappears, the API recovery loop resets an expired lease and dispatches a new attempt, unless the attempt budget is exhausted.
 
@@ -39,7 +40,8 @@ The result API returns test number, verdict, runtime, compiler diagnostics, and 
 ## Learning notes
 
 - **Problem solved:** explicit states make progress and failure outcomes visible to both the UI and operators.
-- **Why this design:** profiles isolate language-specific commands and limits, while the worker owns scheduling, persistence, and a shared evaluation path. Socket.IO gives the UI prompt updates, while REST stays the source for current state.
+- **Why this design:** profiles isolate language-specific commands and limits, while the API scheduler routes by capability and load and the worker owns execution and result persistence. Socket.IO gives the UI prompt updates, while REST stays the source for current state.
+- **Scheduling:** the API selects a language-compatible worker group using fresh capability heartbeats and RabbitMQ queue depth; [scheduling](scheduling.md) documents FIFO, priority, and load scoring.
 - **Important failure cases:** compile errors become `COMPILATION_ERROR`; program failures become runtime verdicts; Docker or database failures become `SYSTEM_ERROR` when that state can be persisted.
 - **Interview question — Why compare normalized output?** It ignores harmless whitespace differences while preserving token order and values.
 - **Interview question — Why persist per-test results?** A final verdict alone hides where evaluation stopped and cannot support a useful result page.

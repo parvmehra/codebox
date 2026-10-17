@@ -55,7 +55,7 @@ describe('stale submission recovery', () => {
           leaseToken,
         },
       ])
-      .mockResolvedValueOnce([{ id: submissionId }]);
+      .mockResolvedValueOnce([{ id: submissionId, priority: 0 }]);
 
     await recoverSubmissions(now);
 
@@ -87,7 +87,7 @@ describe('stale submission recovery', () => {
         status: SubmissionStatus.QUEUED,
       }),
     );
-    expect(mocks.publishSubmission).toHaveBeenCalledWith(submissionId);
+    expect(mocks.publishSubmission).toHaveBeenCalledWith(submissionId, 0);
     expect(mocks.submissionUpdateMany).toHaveBeenNthCalledWith(2, {
       where: { id: submissionId, status: SubmissionStatus.QUEUED, needsDispatch: true },
       data: { needsDispatch: false, lastEnqueuedAt: now },

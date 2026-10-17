@@ -10,10 +10,11 @@ import {
   assertSubmissionTopology,
   SUBMISSION_CONTROL_EXCHANGE,
   SUBMISSION_DEAD_QUEUE,
-  SUBMISSION_QUEUE,
+  SUBMISSION_INGRESS_QUEUE,
 } from './topology.js';
+import { resolveMessagePriority } from './scheduler.js';
 
-export { SUBMISSION_QUEUE } from './topology.js';
+export { SUBMISSION_INGRESS_QUEUE, SUBMISSION_QUEUE } from './topology.js';
 
 let connection: ChannelModel | undefined;
 let channel: ConfirmChannel | undefined;
@@ -70,13 +71,13 @@ async function getConfirmChannel(): Promise<ConfirmChannel> {
   }
 }
 
-export async function publishSubmission(submissionId: string): Promise<void> {
+export async function publishSubmission(submissionId: string, priority = 0): Promise<void> {
   const publisher = await getConfirmChannel();
   const payload = Buffer.from(JSON.stringify({ submissionId }));
 
   await new Promise<void>((resolve, reject) => {
     publisher.sendToQueue(
-      SUBMISSION_QUEUE,
+      SUBMISSION_INGRESS_QUEUE,
       payload,
       {
         persistent: true,
@@ -84,6 +85,7 @@ export async function publishSubmission(submissionId: string): Promise<void> {
         messageId: submissionId,
         timestamp: Date.now(),
         type: 'submission.execute',
+        priority: resolveMessagePriority(priority, runtimeEnv.SCHEDULER_STRATEGY),
       },
       (error) => (error ? reject(error) : resolve()),
     );

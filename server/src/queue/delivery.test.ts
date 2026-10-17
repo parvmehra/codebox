@@ -2,7 +2,7 @@ import type { ConfirmChannel, ConsumeMessage } from 'amqplib';
 import { describe, expect, it, vi } from 'vitest';
 import { getRetryCount, publishDeadLetter, publishRetryMessage } from './delivery.js';
 import { MAX_EXECUTION_ATTEMPTS } from './reliability.js';
-import { MAX_JOB_RETRIES, SUBMISSION_DEAD_QUEUE, SUBMISSION_RETRY_QUEUE } from './topology.js';
+import { MAX_JOB_RETRIES, SUBMISSION_DEAD_QUEUE, SUBMISSION_RETRY_QUEUE_V2 } from './topology.js';
 
 const payload = Buffer.from(
   JSON.stringify({ submissionId: 'c3070e38-c557-43d5-a59b-e8af46675370' }),
@@ -52,7 +52,7 @@ describe('bounded RabbitMQ delivery policy', () => {
 
     expect(fake.sendToQueue).toHaveBeenCalledOnce();
     const [queue, content, options] = fake.sendToQueue.mock.calls[0];
-    expect(queue).toBe(SUBMISSION_RETRY_QUEUE);
+    expect(queue).toBe(SUBMISSION_RETRY_QUEUE_V2);
     expect(content).toEqual(payload);
     expect(options).toMatchObject({
       persistent: true,

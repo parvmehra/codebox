@@ -1,0 +1,8 @@
+ALTER TABLE "Submission"
+  ADD COLUMN "priority" INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE "Worker"
+  ADD COLUMN "capabilities" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+
+ALTER TABLE "WorkerHeartbeat"
+  ADD COLUMN "capabilities" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

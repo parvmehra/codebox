@@ -6,10 +6,12 @@ import { env } from './config/env.js';
 import { prisma } from './database/prisma.js';
 import { closeSubmissionPublisher } from './queue/submissions.js';
 import { startSubmissionRecovery } from './modules/submissions/recovery.js';
+import { startSubmissionScheduler } from './queue/scheduler-service.js';
 
 const server = createServer(app);
 const io = createSocketServer(server);
 const closeRealtimeEventConsumer = await startRealtimeEventConsumer(io);
+const stopSubmissionScheduler = await startSubmissionScheduler();
 const stopSubmissionRecovery = await startSubmissionRecovery();
 server.listen(env.PORT, () => console.info({ port: env.PORT }, 'API listening'));
 let isShuttingDown = false;
@@ -21,6 +23,7 @@ async function shutdown(signal: string) {
 
   const socketServerClosed = new Promise<void>((resolve) => io.close(() => resolve()));
   await stopSubmissionRecovery();
+  await stopSubmissionScheduler();
   await Promise.allSettled([
     socketServerClosed,
     closeRealtimeEventConsumer(),

@@ -1,7 +1,7 @@
 import { WorkerStatus } from '@prisma/client';
 import { prisma } from '../database/prisma.js';
 
-const HEARTBEAT_TTL_MS = 45_000;
+export const HEARTBEAT_TTL_MS = 45_000;
 const HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export async function persistWorkerHeartbeat(
@@ -9,15 +9,16 @@ export async function persistWorkerHeartbeat(
   status: WorkerStatus,
   activeJobs: number,
   receivedAt = new Date(),
+  capabilities: string[] = [],
 ): Promise<void> {
   await prisma.worker.upsert({
     where: { id: workerId },
-    create: { id: workerId, status, activeJobs, lastHeartbeatAt: receivedAt },
-    update: { status, activeJobs, lastHeartbeatAt: receivedAt },
+    create: { id: workerId, status, activeJobs, capabilities, lastHeartbeatAt: receivedAt },
+    update: { status, activeJobs, capabilities, lastHeartbeatAt: receivedAt },
   });
 
   await prisma.workerHeartbeat.create({
-    data: { workerId, status, activeJobs, recordedAt: receivedAt },
+    data: { workerId, status, activeJobs, capabilities, recordedAt: receivedAt },
   });
   const historyCutoff = new Date(receivedAt.getTime() - HISTORY_RETENTION_MS);
   await prisma.workerHeartbeat.deleteMany({ where: { recordedAt: { lt: historyCutoff } } });

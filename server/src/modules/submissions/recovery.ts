@@ -71,12 +71,12 @@ async function runRecovery(now: Date): Promise<void> {
       },
       orderBy: { lastEnqueuedAt: 'asc' },
       take: RECOVERY_BATCH_SIZE,
-      select: { id: true },
+      select: { id: true, priority: true },
     });
 
     for (const submission of dispatchable) {
       try {
-        await publishSubmission(submission.id);
+        await publishSubmission(submission.id, submission.priority);
         await prisma.submission.updateMany({
           where: { id: submission.id, status: SubmissionStatus.QUEUED, needsDispatch: true },
           data: { needsDispatch: false, lastEnqueuedAt: now },

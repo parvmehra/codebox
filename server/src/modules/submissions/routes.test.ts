@@ -51,8 +51,8 @@ afterEach(async () => {
   });
 });
 
-function authHeaders(): HeadersInit {
-  const token = jwt.sign({ id: userId, role: 'USER' }, env.JWT_SECRET);
+function authHeaders(role = 'USER'): HeadersInit {
+  const token = jwt.sign({ id: userId, role }, env.JWT_SECRET);
   return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 }
 
@@ -63,6 +63,7 @@ describe('submission API', () => {
       id: submissionId,
       status: SubmissionStatus.QUEUED,
       language: 'JAVA',
+      priority: 0,
       createdAt: new Date('2026-10-13T00:00:00.000Z'),
     } as never);
 
@@ -76,7 +77,7 @@ describe('submission API', () => {
     expect(await response.json()).toMatchObject({
       data: { id: submissionId, status: SubmissionStatus.QUEUED, language: 'JAVA' },
     });
-    expect(publishSubmission).toHaveBeenCalledWith(submissionId);
+    expect(publishSubmission).toHaveBeenCalledWith(submissionId, 0);
     expect(publishSubmissionEvent).toHaveBeenCalledWith({
       type: 'submission:queued',
       submissionId,
@@ -92,6 +93,7 @@ describe('submission API', () => {
       id: submissionId,
       status: SubmissionStatus.QUEUED,
       language: 'JAVA',
+      priority: 0,
       createdAt: new Date('2026-10-13T00:00:00.000Z'),
     } as never);
     vi.mocked(publishSubmission).mockRejectedValue(new Error('broker unavailable'));
@@ -143,6 +145,7 @@ describe('submission API', () => {
       id: submissionId,
       status: SubmissionStatus.QUEUED,
       language: data.language,
+      priority: data.priority,
       createdAt: new Date('2026-10-13T00:00:00.000Z'),
     })) as never);
     vi.mocked(publishSubmission).mockResolvedValue(undefined);
@@ -159,6 +162,48 @@ describe('submission API', () => {
     }
     expect(publishSubmission).toHaveBeenCalledTimes(4);
     expect(publishSubmissionEvent).toHaveBeenCalledTimes(4);
+  });
+
+  it('allows admins to assign a bounded priority to a submission', async () => {
+    vi.mocked(prisma.problem.findFirst).mockResolvedValue({ id: problemId } as never);
+    vi.mocked(prisma.submission.create).mockResolvedValue({
+      id: submissionId,
+      status: SubmissionStatus.QUEUED,
+      language: 'JAVA',
+      priority: 7,
+      createdAt: new Date('2026-10-13T00:00:00.000Z'),
+    } as never);
+
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      method: 'POST',
+      headers: authHeaders('ADMIN'),
+      body: JSON.stringify({
+        problemId,
+        language: 'JAVA',
+        priority: 7,
+        sourceCode: 'class Main {}',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(publishSubmission).toHaveBeenCalledWith(submissionId, 7);
+  });
+
+  it('does not let regular users raise submission priority', async () => {
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        problemId,
+        language: 'JAVA',
+        priority: 1,
+        sourceCode: 'class Main {}',
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: 'INSUFFICIENT_ROLE' } });
+    expect(prisma.problem.findFirst).not.toHaveBeenCalled();
   });
 
   it('rejects language values outside the supported enum', async () => {

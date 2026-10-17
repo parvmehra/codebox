@@ -1,18 +1,19 @@
 import type { ConfirmChannel, ConsumeMessage, Options } from 'amqplib';
-import { SUBMISSION_DEAD_QUEUE, SUBMISSION_RETRY_QUEUE } from './topology.js';
+import { SUBMISSION_DEAD_QUEUE, SUBMISSION_RETRY_QUEUE_V2 } from './topology.js';
 
 export async function publishRetryMessage(
   channel: ConfirmChannel,
   message: ConsumeMessage,
   retryCount: number,
 ): Promise<void> {
-  await publishConfirmed(channel, SUBMISSION_RETRY_QUEUE, message, {
+  await publishConfirmed(channel, SUBMISSION_RETRY_QUEUE_V2, message, {
     contentType: message.properties.contentType ?? 'application/json',
     contentEncoding: message.properties.contentEncoding,
     messageId: message.properties.messageId,
     correlationId: message.properties.correlationId,
     timestamp: Date.now(),
     type: message.properties.type ?? 'submission.execute',
+    priority: message.properties.priority,
     persistent: true,
     headers: { ...message.properties.headers, 'x-retry-count': retryCount },
   });
@@ -30,6 +31,7 @@ export async function publishDeadLetter(
     correlationId: message.properties.correlationId,
     timestamp: Date.now(),
     type: message.properties.type ?? 'submission.execute',
+    priority: message.properties.priority,
     persistent: true,
     headers: {
       ...message.properties.headers,

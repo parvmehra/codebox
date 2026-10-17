@@ -1,6 +1,6 @@
 # Worker design
 
-The worker is a separate Node.js process. It consumes the durable `submissions.execute` queue with a prefetch of one message per worker. Multiple worker containers can be added without changing the API contract.
+The worker is a separate Node.js process. `WORKER_LANGUAGES` lists the languages it can execute; it consumes a durable queue shared only with workers advertising the same capability set. Multiple worker groups can run different language images without changing the API contract. Each worker queue has a prefetch of one.
 
 ## Language profiles
 
@@ -35,11 +35,20 @@ After each status or test-result write, the worker publishes a compact event to 
 
 Worker snapshots and append-only heartbeat records are persisted in PostgreSQL. The `/status` page counts workers online when their heartbeat is no older than 45 seconds and polls every five seconds. Heartbeat history is retained for seven days. If a real-time event is missed, the submission detail page refreshes through REST polling.
 
+## Scheduling
+
+The API scheduler consumes durable ingress and routes work only to a capability group that includes the submission's language. It reads the RabbitMQ depth of each eligible worker-group queue and combines it with the group's average active-job count; the lowest load wins. Workers sharing a capability set use one queue and RabbitMQ distributes messages to their consumers.
+
+Set `SCHEDULER_STRATEGY=FIFO` for the default arrival order, or `PRIORITY` to honor a submission priority from 0 through 10. Only admins can set a nonzero priority through the submission API. `WORKER_LANGUAGES` is a comma-separated list such as `JAVA,PYTHON`; it defaults to all supported languages. If no live matching worker is available, a confirmed copy waits 15 seconds before the scheduler tries again.
+
 ## Learning notes
 
 - **Problem solved:** queue consumers absorb execution work asynchronously and survive duplicate delivery, transient persistence errors, and worker crashes.
 - **Why this design:** the database lease is a small, explainable fencing mechanism. RabbitMQ handles delivery and retry timing, while PostgreSQL remains authoritative for job ownership and results.
 - **Why C++ has a second tmpfs:** the source workspace stays `noexec`; the compiler writes its output to a separate, bounded executable mount that is removed with the container.
 - **Important failure cases:** a stale worker can continue briefly after losing its lease, but its conditional writes fail; cancelled and expired leases prevent its result from replacing a newer state.
+- **Scheduler failure cases:** ingress and capability queues are durable; an unacknowledged ingress delivery returns to RabbitMQ if the API exits. Jobs wait and retry assignment when no fresh capable worker is registered.
 - **Interview question — Why prefetch one?** It bounds unacknowledged work and makes per-worker active-job reporting straightforward.
 - **Interview question — How are retries idempotent?** A conditional `QUEUED` claim and a unique execution attempt number prevent two deliveries from creating the same active attempt.
+- **Interview question — How does the scheduler avoid sending Python to a Java-only worker?** Workers advertise a capability set in their heartbeat and consume only the durable queue named for that exact set; the scheduler selects only matching groups.
+- **Interview question — Why combine queue depth with active jobs?** Queue depth measures waiting work while heartbeat snapshots estimate work already running; together they distinguish equally capable but differently loaded worker groups.

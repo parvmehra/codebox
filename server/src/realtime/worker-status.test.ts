@@ -39,7 +39,7 @@ beforeEach(() => {
 describe('persisted worker status', () => {
   it('persists heartbeat history and prunes records beyond the retention window', async () => {
     const receivedAt = new Date('2026-10-16T10:00:00.000Z');
-    await persistWorkerHeartbeat(workerId, WorkerStatus.ONLINE, 1, receivedAt);
+    await persistWorkerHeartbeat(workerId, WorkerStatus.ONLINE, 1, receivedAt, []);
 
     expect(mocks.workerUpsert).toHaveBeenCalledWith({
       where: { id: workerId },
@@ -47,15 +47,22 @@ describe('persisted worker status', () => {
         id: workerId,
         status: WorkerStatus.ONLINE,
         activeJobs: 1,
+        capabilities: [],
         lastHeartbeatAt: receivedAt,
       },
-      update: { status: WorkerStatus.ONLINE, activeJobs: 1, lastHeartbeatAt: receivedAt },
+      update: {
+        status: WorkerStatus.ONLINE,
+        activeJobs: 1,
+        capabilities: [],
+        lastHeartbeatAt: receivedAt,
+      },
     });
     expect(mocks.heartbeatCreate).toHaveBeenCalledWith({
       data: {
         workerId,
         status: WorkerStatus.ONLINE,
         activeJobs: 1,
+        capabilities: [],
         recordedAt: receivedAt,
       },
     });

@@ -4,14 +4,15 @@ import amqp, { type ChannelModel, type ConfirmChannel, type ConsumeMessage } fro
 import { z } from 'zod';
 import { runtimeEnv } from '../config/runtime-env.js';
 import { prisma } from '../database/prisma.js';
-import { SUBMISSION_QUEUE } from '../queue/submissions.js';
 import { getRetryCount, publishDeadLetter, publishRetryMessage } from '../queue/delivery.js';
 import {
   assertSubmissionTopology,
   MAX_JOB_RETRIES,
   SUBMISSION_CONTROL_EXCHANGE,
+  assertWorkerQueue,
 } from '../queue/topology.js';
 import { SUBMISSION_LEASE_MS } from '../queue/reliability.js';
+import { parseWorkerCapabilities } from '../queue/scheduler.js';
 import { SUBMISSION_EVENTS_EXCHANGE } from '../realtime/events.js';
 import { publishRealtimeEvent } from '../realtime/publish.js';
 import { persistWorkerHeartbeat } from '../realtime/worker-status.js';
@@ -25,6 +26,7 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const CANCELLATION_POLL_MS = 2_000;
 const SHUTDOWN_DRAIN_MS = 18_000;
 const SHUTDOWN_ABORT_WAIT_MS = 7_000;
+const workerCapabilities = parseWorkerCapabilities(runtimeEnv.WORKER_LANGUAGES);
 
 type ActiveSubmission = {
   controller: AbortController;
@@ -47,6 +49,7 @@ async function startWorker(): Promise<void> {
   connection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
   channel = await connection.createConfirmChannel();
   await assertSubmissionTopology(channel);
+  const workerQueue = (await assertWorkerQueue(channel, workerCapabilities)).queue;
   await channel.assertExchange(SUBMISSION_EVENTS_EXCHANGE, 'topic', { durable: false });
   await channel.prefetch(1);
 
@@ -79,7 +82,7 @@ async function startWorker(): Promise<void> {
   controlConsumerTag = controlConsumer.consumerTag;
 
   const consumer = await channel.consume(
-    SUBMISSION_QUEUE,
+    workerQueue,
     (message) => {
       if (!message) return;
       const work = handleMessage(message).catch((error: unknown) => {
@@ -104,7 +107,10 @@ async function startWorker(): Promise<void> {
   cancellationTimer = setInterval(() => void monitorActiveSubmissions(), CANCELLATION_POLL_MS);
   cancellationTimer.unref();
   await publishWorkerHeartbeat(WorkerStatus.ONLINE);
-  console.info({ queue: SUBMISSION_QUEUE, workerId, consumerTag }, 'Submission worker is ready');
+  console.info(
+    { queue: workerQueue, workerId, capabilities: workerCapabilities, consumerTag },
+    'Submission worker is ready',
+  );
 }
 
 async function handleMessage(message: ConsumeMessage): Promise<void> {
@@ -217,7 +223,13 @@ async function monitorActiveSubmissions(): Promise<void> {
 async function publishWorkerHeartbeat(status: WorkerStatus): Promise<void> {
   const receivedAt = new Date();
   try {
-    await persistWorkerHeartbeat(workerId, status, activeSubmissions.size, receivedAt);
+    await persistWorkerHeartbeat(
+      workerId,
+      status,
+      activeSubmissions.size,
+      receivedAt,
+      workerCapabilities,
+    );
   } catch (error) {
     console.warn({ error, workerId }, 'Could not persist worker heartbeat');
   }

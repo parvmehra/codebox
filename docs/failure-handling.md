@@ -2,10 +2,11 @@
 
 ## Delivery and retry policy
 
-- The API publishes persistent jobs to a durable RabbitMQ queue and waits for a publisher confirmation.
+- The API publishes persistent jobs to a durable scheduler ingress queue and waits for a publisher confirmation.
+- The API scheduler forwards a job to a durable queue for a live worker capability group. With no matching consumer, a confirmed copy waits 15 seconds before assignment is retried.
 - A worker claims a queued submission with a conditional database update. The update increments its attempt count and assigns a unique lease token and expiry.
 - Transient worker or persistence failures release a still-owned lease and publish a copy to the durable retry queue. The original delivery is acknowledged only after RabbitMQ confirms that copy.
-- The retry queue delays a delivery for five seconds before dead-lettering it back to the execution queue. A submission receives at most three execution attempts total.
+- The retry queue delays a delivery for five seconds before dead-lettering it back to scheduler ingress. A submission receives at most three execution attempts total.
 - Invalid messages and exhausted jobs are copied to the durable `submissions.dead` queue with a reason header; the original is acknowledged only after the dead-letter copy is confirmed.
 - PostgreSQL is authoritative for claims and results. Duplicate messages can create another delivery but cannot claim an already active or terminal submission. Each successful claim uses a new, unique execution attempt number.
 - If a retryable failure can be saved, the submission returns to `QUEUED`. After the final attempt, it becomes `SYSTEM_ERROR`. If the database is unavailable during finalization, the message is preserved in the dead-letter queue for operator recovery.
@@ -28,6 +29,7 @@ On worker shutdown, the consumer stops accepting new work and waits up to 18 sec
 - Heartbeat history is operational data, not an audit guarantee. A database outage can interrupt its retention cleanup and heartbeat writes.
 - Docker provides useful educational isolation, not a guarantee against every hostile-code escape. See [sandbox security](sandbox-security.md).
 - Socket.IO updates remain transient; PostgreSQL-backed REST reads and polling are the recovery path for missed events.
+- FIFO is the default scheduler strategy. Priority ordering uses RabbitMQ's bounded priority queue and can reorder queued work, but it does not preempt a job already running.
 
 ## Learning notes
 

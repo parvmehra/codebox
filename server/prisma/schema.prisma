@@ -103,6 +103,7 @@ model Submission {
   language        SubmissionLanguage
   sourceCode      String             @db.Text
   status          SubmissionStatus   @default(QUEUED)
+  priority        Int                @default(0)
   attemptCount    Int                @default(0)
   workerId        String?
   leaseToken      String?
@@ -129,6 +130,7 @@ model Worker {
   id              String            @id
   status          WorkerStatus      @default(ONLINE)
   activeJobs      Int               @default(0)
+  capabilities    String[]          @default([])
   lastHeartbeatAt DateTime          @default(now())
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -138,12 +140,13 @@ model Worker {
 }
 
 model WorkerHeartbeat {
-  id         String       @id @default(uuid())
-  workerId   String
-  status     WorkerStatus
-  activeJobs Int
-  recordedAt DateTime     @default(now())
-  worker     Worker       @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  id           String       @id @default(uuid())
+  workerId     String
+  status       WorkerStatus
+  activeJobs   Int
+  capabilities String[]     @default([])
+  recordedAt   DateTime     @default(now())
+  worker       Worker       @relation(fields: [workerId], references: [id], onDelete: Cascade)
 
   @@index([workerId, recordedAt])
 }

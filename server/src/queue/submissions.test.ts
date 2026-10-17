@@ -38,6 +38,7 @@ const {
   publishSubmissionCancellation,
   publishSubmissionDeadLetter,
   SUBMISSION_QUEUE,
+  SUBMISSION_INGRESS_QUEUE,
 } = await import('./submissions.js');
 
 beforeEach(() => vi.clearAllMocks());
@@ -52,6 +53,10 @@ describe('submission queue publisher', () => {
 
     expect(connect).toHaveBeenCalledOnce();
     expect(fakeChannel.assertQueue).toHaveBeenCalledWith(SUBMISSION_QUEUE, { durable: true });
+    expect(fakeChannel.assertQueue).toHaveBeenCalledWith(SUBMISSION_INGRESS_QUEUE, {
+      durable: true,
+      arguments: { 'x-max-priority': 10 },
+    });
     expect(fakeChannel.assertQueue).toHaveBeenCalledWith('submissions.retry', {
       durable: true,
       arguments: {
@@ -74,13 +79,14 @@ describe('submission queue publisher', () => {
       Buffer,
       Record<string, unknown>,
     ];
-    expect(queue).toBe(SUBMISSION_QUEUE);
+    expect(queue).toBe(SUBMISSION_INGRESS_QUEUE);
     expect(JSON.parse(content.toString())).toEqual({ submissionId });
     expect(options).toMatchObject({
       persistent: true,
       contentType: 'application/json',
       messageId: submissionId,
       type: 'submission.execute',
+      priority: 0,
     });
   });
 

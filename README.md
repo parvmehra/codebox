@@ -1,17 +1,21 @@
 # Distributed Code Execution & Evaluation Platform
 
-The project has a React client with a Monaco code editor, a modular Express API, PostgreSQL with Prisma, JWT authentication, problem browsing, and a language-aware submission worker. Authenticated users can enqueue Java 21, Python 3.12, C++23, and Node.js 22 submissions; the worker compiles or checks and evaluates them in short-lived Docker containers and stores per-test verdicts. Submission details receive live Socket.IO status and test-progress events, with REST polling as a fallback.
+The project has a React client with a Monaco code editor, a modular Express API, PostgreSQL with Prisma, JWT authentication, problem browsing, a queue-depth-aware scheduler, and language-aware workers. Authenticated users can enqueue Java 21, Python 3.12, C++23, and Node.js 22 submissions; matching workers compile or check and evaluate them in short-lived Docker containers and store per-test verdicts. Submission details receive live Socket.IO status and test-progress events, with REST polling as a fallback.
 
 ## Architecture
 
 ```text
-React + Vite  --->  Express API  --->  PostgreSQL
-     :5173             :4000              :5432
-                          |
-                          v
-                    RabbitMQ queue  --->  Worker  --->  Language sandbox
-                       :5672                |          (short-lived)
-                                            +----------> PostgreSQL
+React + Vite  --->  Express API + scheduler  --->  PostgreSQL
+     :5173                  :4000                    :5432
+                                  |
+                                  v
+                         RabbitMQ ingress queue
+                                  |
+                         compatible worker queue
+                                  |
+                                  v
+                            Worker group  --->  Language sandbox
+                                                   (short-lived)
 ```
 
 PostgreSQL is the durable source of truth for users, problems, submissions, executions, and test results. The API publishes persistent jobs to a durable RabbitMQ queue and waits for publisher confirmation. The API remains a modular monolith; workers run as separate processes. Only the trusted worker can access the Docker daemon socket. Submitted programs run in containers without that socket or host path mounts.
@@ -45,24 +49,26 @@ docker compose up --build
 
 Before starting, set a safe `JWT_SECRET` in `.env`. Compose waits for healthy Postgres and RabbitMQ services; the API applies checked-in migrations and seeds the sample problem at startup. The worker needs access to `/var/run/docker.sock` so it can create isolated execution containers. The submitted-code containers do not receive the socket.
 
+The scheduler defaults to FIFO. Set `SCHEDULER_STRATEGY=PRIORITY` to honor admin-set priorities from 0 to 10. Set `WORKER_LANGUAGES` to a comma-separated supported language list when running a specialized worker; it defaults to all four languages.
+
 ## Continuous integration
 
 GitHub Actions runs linting, TypeScript checks, server tests, application builds, Docker image builds, and a Docker-backed end-to-end submission for each supported language on pushes to `main` and pull requests.
 
 ## Implemented endpoints
 
-| Method | Endpoint                      | Purpose                                          |
-| ------ | ----------------------------- | ------------------------------------------------ |
-| POST   | `/api/auth/register`          | Register a user                                  |
-| POST   | `/api/auth/login`             | Log in and receive a JWT                         |
-| GET    | `/api/auth/me`                | Return the authenticated user                    |
-| GET    | `/api/problems`               | List published problems                          |
-| GET    | `/api/problems/:id`           | Get a problem without hidden tests               |
-| POST   | `/api/problems`               | Create a problem (admin only)                    |
-| POST   | `/api/submissions`            | Save and enqueue a submission (JWT required)     |
-| GET    | `/api/submissions`            | List the authenticated user's submissions        |
-| GET    | `/api/submissions/:id`        | Read one of the authenticated user's submissions |
-| POST   | `/api/submissions/:id/cancel` | Cancel an owned queued or active submission      |
+| Method | Endpoint                      | Purpose                                                              |
+| ------ | ----------------------------- | -------------------------------------------------------------------- |
+| POST   | `/api/auth/register`          | Register a user                                                      |
+| POST   | `/api/auth/login`             | Log in and receive a JWT                                             |
+| GET    | `/api/auth/me`                | Return the authenticated user                                        |
+| GET    | `/api/problems`               | List published problems                                              |
+| GET    | `/api/problems/:id`           | Get a problem without hidden tests                                   |
+| POST   | `/api/problems`               | Create a problem (admin only)                                        |
+| POST   | `/api/submissions`            | Save and enqueue a submission (JWT required; priority is admin-only) |
+| GET    | `/api/submissions`            | List the authenticated user's submissions                            |
+| GET    | `/api/submissions/:id`        | Read one of the authenticated user's submissions                     |
+| POST   | `/api/submissions/:id/cancel` | Cancel an owned queued or active submission                          |
 
 ## Submission lifecycle contract
 
@@ -92,10 +98,11 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Each lang
 - [Architecture](docs/architecture.md)
 - [Execution flow](docs/execution-flow.md)
 - [Worker design](docs/worker-design.md)
+- [Scheduling](docs/scheduling.md)
 - [Sandbox security](docs/sandbox-security.md)
 - [Failure handling](docs/failure-handling.md)
 - [Database design](docs/database.md)
 
 ## Next phase
 
-Phase 5 reliability is implemented: bounded retries, a durable dead-letter queue, lease-based idempotency and stale-job recovery, persisted worker heartbeats, cancellation, and bounded graceful shutdown. Phase 6 will add the simple FIFO/priority scheduler and worker capability matching.
+Phase 5 reliability is implemented: bounded retries, a durable dead-letter queue, lease-based idempotency and stale-job recovery, persisted worker heartbeats, cancellation, and bounded graceful shutdown. Phase 6 adds FIFO or priority scheduling, capability matching, and queue-depth-aware worker-group assignment. Phase 7 will add operational metrics and dashboards.
