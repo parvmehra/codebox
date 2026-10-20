@@ -45,7 +45,9 @@ await waitFor(async () => {
   return body.database === 'ok';
 }, 'Grafana');
 
-const workerReadiness = await queryPrometheus('codebox_worker_ready');
-assert.equal(Number(workerReadiness?.[0]?.value?.[1]), 1, 'The worker should report ready.');
+await waitFor(async () => {
+  const workerReadiness = await queryPrometheus('codebox_worker_ready');
+  return Number(workerReadiness?.[0]?.value?.[1]) === 1;
+}, 'Prometheus worker readiness metric');
 
 console.info('Prometheus is scraping the API and worker; Grafana is ready.');
