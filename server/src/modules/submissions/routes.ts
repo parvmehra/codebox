@@ -216,6 +216,109 @@ submissionsRouter.post(
   },
 );
 
+submissionsRouter.post(
+  '/:id/rerun',
+  requireAuth,
+  async (request: AuthenticatedRequest, response) => {
+    const id = z.string().uuid().parse(request.params.id);
+    const original = await prisma.submission.findFirst({
+      where: { id, userId: request.user!.id },
+      select: {
+        id: true,
+        problemId: true,
+        language: true,
+        sourceCode: true,
+        priority: true,
+        status: true,
+        executions: {
+          orderBy: { attemptNumber: 'desc' },
+          take: 1,
+          select: { id: true, completedAt: true },
+        },
+      },
+    });
+    if (!original) throw new HttpError(404, 'SUBMISSION_NOT_FOUND', 'Submission not found.');
+
+    const sourceExecution = original.executions[0];
+    if (!isTerminalSubmissionStatus(original.status) || !sourceExecution?.completedAt) {
+      throw new HttpError(
+        409,
+        'SUBMISSION_NOT_RERUNNABLE',
+        'Only a completed submission with a recorded execution can be re-run.',
+      );
+    }
+
+    const rerun = await prisma.submission.create({
+      data: {
+        userId: request.user!.id,
+        problemId: original.problemId,
+        language: original.language,
+        sourceCode: original.sourceCode,
+        priority: original.priority,
+        rerunOfExecutionId: sourceExecution.id,
+      },
+      select: {
+        id: true,
+        status: true,
+        language: true,
+        priority: true,
+        rerunOfExecutionId: true,
+        createdAt: true,
+      },
+    });
+
+    try {
+      await publishSubmissionEvent({
+        type: 'submission:queued',
+        submissionId: rerun.id,
+        userId: request.user!.id,
+        status: SubmissionStatus.QUEUED,
+        updatedAt: rerun.createdAt.toISOString(),
+      });
+    } catch (error) {
+      log.warn({ error, submissionId: rerun.id }, 'Could not publish re-run queued event');
+    }
+
+    try {
+      await publishSubmission(rerun.id, rerun.priority);
+      submissionEnqueuesTotal.inc({ language: rerun.language });
+    } catch (error) {
+      submissionEnqueueFailuresTotal.inc({ language: rerun.language });
+      log.error({ error, submissionId: rerun.id }, 'Could not publish re-run job');
+      assertSubmissionTransition(SubmissionStatus.QUEUED, SubmissionStatus.SYSTEM_ERROR);
+      await prisma.submission.updateMany({
+        where: { id: rerun.id, status: SubmissionStatus.QUEUED },
+        data: {
+          status: SubmissionStatus.SYSTEM_ERROR,
+          errorMessage: 'The submission could not be queued.',
+        },
+      });
+      await publishSubmissionEvent({
+        type: 'submission:failed',
+        submissionId: rerun.id,
+        userId: request.user!.id,
+        status: SubmissionStatus.SYSTEM_ERROR,
+        updatedAt: new Date().toISOString(),
+        errorMessage: 'The submission could not be queued.',
+      }).catch((eventError: unknown) => {
+        log.warn(
+          { error: eventError, submissionId: rerun.id },
+          'Could not publish re-run failure event',
+        );
+      });
+      return response.status(503).json({
+        error: {
+          code: 'QUEUE_UNAVAILABLE',
+          message: 'The re-run was saved but could not be queued.',
+        },
+        submissionId: rerun.id,
+      });
+    }
+
+    return response.status(202).json({ data: rerun });
+  },
+);
+
 submissionsRouter.get('/:id', requireAuth, async (request: AuthenticatedRequest, response) => {
   const id = z.string().uuid().parse(request.params.id);
   const submission = await prisma.submission.findFirst({
@@ -227,14 +330,32 @@ submissionsRouter.get('/:id', requireAuth, async (request: AuthenticatedRequest,
       status: true,
       executionTimeMs: true,
       memoryUsedKb: true,
+      rerunOfExecutionId: true,
       errorMessage: true,
       createdAt: true,
       updatedAt: true,
       problem: { select: { id: true, slug: true, title: true } },
       executions: {
         orderBy: { attemptNumber: 'desc' },
-        take: 1,
         select: {
+          id: true,
+          attemptNumber: true,
+          languageVersion: true,
+          dockerImage: true,
+          dockerImageDigest: true,
+          dockerImageId: true,
+          sourceCodeSha256: true,
+          profileSnapshot: true,
+          timeLimitMs: true,
+          memoryLimitMb: true,
+          startedAt: true,
+          completedAt: true,
+          executionTimeMs: true,
+          memoryUsedKb: true,
+          testCases: {
+            orderBy: { testIndex: 'asc' },
+            select: { testIndex: true, testCaseVersion: true },
+          },
           testResults: {
             orderBy: { testIndex: 'asc' },
             select: { testIndex: true, status: true, executionTimeMs: true, errorMessage: true },

@@ -7,7 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.doMock('../../database/prisma.js', () => ({
   prisma: {
     $queryRaw: vi.fn(),
-    problem: { findFirst: vi.fn() },
+    $transaction: vi.fn(),
+    problem: { findFirst: vi.fn(), findUnique: vi.fn() },
+    testCase: {
+      findMany: vi.fn(),
+      create: vi.fn(),
+      updateMany: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    testCaseVersion: { create: vi.fn() },
     submission: {
       create: vi.fn(),
       updateMany: vi.fn(),
@@ -36,6 +44,9 @@ const { app } = await import('../../app.js');
 const userId = 'a25145ab-21aa-4d20-9e08-3a2b4d59110f';
 const problemId = '7ad05396-f608-44ea-8a31-5e4be967fab6';
 const submissionId = 'c3070e38-c557-43d5-a59b-e8af46675370';
+const executionId = '48a6a0a4-828e-4ea0-a9ec-60509f663ca5';
+const rerunSubmissionId = '63806c75-00b8-4fa8-9e88-f81cd67c2a3b';
+const testCaseId = 'a7bdb143-0d95-42c8-91f8-58b531d00fed';
 let server: Server;
 let baseUrl: string;
 
@@ -277,6 +288,168 @@ describe('submission API', () => {
     ]);
     expect(body.data).not.toHaveProperty('input');
     expect(body.data).not.toHaveProperty('expectedOut');
+  });
+
+  it('creates a separate re-run submission linked to the exact completed execution', async () => {
+    const completedAt = new Date('2026-10-20T10:00:00.000Z');
+    vi.mocked(prisma.submission.findFirst).mockResolvedValue({
+      id: submissionId,
+      problemId,
+      language: 'JAVA',
+      sourceCode: 'public class Main {}',
+      priority: 0,
+      status: SubmissionStatus.ACCEPTED,
+      executions: [{ id: executionId, completedAt }],
+    } as never);
+    vi.mocked(prisma.submission.create).mockResolvedValue({
+      id: rerunSubmissionId,
+      status: SubmissionStatus.QUEUED,
+      language: 'JAVA',
+      priority: 0,
+      rerunOfExecutionId: executionId,
+      createdAt: new Date('2026-10-20T10:01:00.000Z'),
+    } as never);
+    vi.mocked(publishSubmission).mockResolvedValue(undefined);
+
+    const response = await fetch(`${baseUrl}/api/submissions/${submissionId}/rerun`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      data: {
+        id: rerunSubmissionId,
+        status: SubmissionStatus.QUEUED,
+        rerunOfExecutionId: executionId,
+      },
+    });
+    expect(prisma.submission.create).toHaveBeenCalledWith({
+      data: {
+        userId,
+        problemId,
+        language: 'JAVA',
+        sourceCode: 'public class Main {}',
+        priority: 0,
+        rerunOfExecutionId: executionId,
+      },
+      select: expect.objectContaining({ id: true, rerunOfExecutionId: true }),
+    });
+    expect(publishSubmission).toHaveBeenCalledWith(rerunSubmissionId, 0);
+  });
+
+  it('rejects re-running a submission without a completed execution', async () => {
+    vi.mocked(prisma.submission.findFirst).mockResolvedValue({
+      id: submissionId,
+      status: SubmissionStatus.RUNNING,
+      executions: [{ id: executionId, completedAt: null }],
+    } as never);
+
+    const response = await fetch(`${baseUrl}/api/submissions/${submissionId}/rerun`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'SUBMISSION_NOT_RERUNNABLE' },
+    });
+    expect(prisma.submission.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a test case together with its immutable first version', async () => {
+    vi.mocked(prisma.problem.findUnique).mockResolvedValue({ id: problemId } as never);
+    vi.mocked(prisma.testCase.create).mockResolvedValue({
+      id: testCaseId,
+      problemId,
+      version: 1,
+      createdAt: new Date('2026-10-20T10:00:00.000Z'),
+    } as never);
+
+    const response = await fetch(`${baseUrl}/api/problems/${problemId}/test-cases`, {
+      method: 'POST',
+      headers: authHeaders('ADMIN'),
+      body: JSON.stringify({ input: '1 2', expectedOut: '3', isHidden: true }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(prisma.testCase.create).toHaveBeenCalledWith({
+      data: {
+        problemId,
+        input: '1 2',
+        expectedOut: '3',
+        isHidden: true,
+        version: 1,
+        versions: {
+          create: { version: 1, input: '1 2', expectedOut: '3', isHidden: true },
+        },
+      },
+      select: { id: true, problemId: true, version: true, createdAt: true },
+    });
+  });
+
+  it('adds a new immutable test case version with optimistic concurrency', async () => {
+    const transaction = {
+      testCase: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findFirst: vi.fn(),
+      },
+      testCaseVersion: { create: vi.fn().mockResolvedValue({}) },
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(((operation: unknown) =>
+      typeof operation === 'function' ? operation(transaction) : Promise.resolve([])) as never);
+
+    const response = await fetch(`${baseUrl}/api/problems/${problemId}/test-cases/${testCaseId}`, {
+      method: 'PATCH',
+      headers: authHeaders('ADMIN'),
+      body: JSON.stringify({
+        expectedVersion: 1,
+        input: '1 4',
+        expectedOut: '5',
+        isHidden: false,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      data: { id: testCaseId, problemId, version: 2 },
+    });
+    expect(transaction.testCase.updateMany).toHaveBeenCalledWith({
+      where: { id: testCaseId, problemId, version: 1 },
+      data: { input: '1 4', expectedOut: '5', isHidden: false, version: 2 },
+    });
+    expect(transaction.testCaseVersion.create).toHaveBeenCalledWith({
+      data: { testCaseId, version: 2, input: '1 4', expectedOut: '5', isHidden: false },
+    });
+  });
+
+  it('rejects stale test case edits instead of replacing a newer version', async () => {
+    const transaction = {
+      testCase: {
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        findFirst: vi.fn().mockResolvedValue({ version: 3 }),
+      },
+      testCaseVersion: { create: vi.fn() },
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(((operation: unknown) =>
+      typeof operation === 'function' ? operation(transaction) : Promise.resolve([])) as never);
+
+    const response = await fetch(`${baseUrl}/api/problems/${problemId}/test-cases/${testCaseId}`, {
+      method: 'PATCH',
+      headers: authHeaders('ADMIN'),
+      body: JSON.stringify({
+        expectedVersion: 1,
+        input: 'stale',
+        expectedOut: 'old',
+        isHidden: true,
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'TEST_CASE_VERSION_CONFLICT' },
+    });
+    expect(transaction.testCaseVersion.create).not.toHaveBeenCalled();
   });
 
   it('cancels an owned queued submission and signals active workers', async () => {

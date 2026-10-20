@@ -55,22 +55,26 @@ The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana 
 
 ## Continuous integration
 
-GitHub Actions runs linting, TypeScript checks, server tests, application builds, Docker image builds, and a Docker-backed end-to-end submission for each supported language on pushes to `main` and pull requests.
+GitHub Actions runs linting, TypeScript checks, server tests, application builds, Docker image builds, a Docker-backed end-to-end submission for each supported language, and Prometheus/Grafana integration checks on pushes to `main` and pull requests.
 
 ## Implemented endpoints
 
-| Method | Endpoint                      | Purpose                                                              |
-| ------ | ----------------------------- | -------------------------------------------------------------------- |
-| POST   | `/api/auth/register`          | Register a user                                                      |
-| POST   | `/api/auth/login`             | Log in and receive a JWT                                             |
-| GET    | `/api/auth/me`                | Return the authenticated user                                        |
-| GET    | `/api/problems`               | List published problems                                              |
-| GET    | `/api/problems/:id`           | Get a problem without hidden tests                                   |
-| POST   | `/api/problems`               | Create a problem (admin only)                                        |
-| POST   | `/api/submissions`            | Save and enqueue a submission (JWT required; priority is admin-only) |
-| GET    | `/api/submissions`            | List the authenticated user's submissions                            |
-| GET    | `/api/submissions/:id`        | Read one of the authenticated user's submissions                     |
-| POST   | `/api/submissions/:id/cancel` | Cancel an owned queued or active submission                          |
+| Method | Endpoint                                   | Purpose                                                              |
+| ------ | ------------------------------------------ | -------------------------------------------------------------------- |
+| POST   | `/api/auth/register`                       | Register a user                                                      |
+| POST   | `/api/auth/login`                          | Log in and receive a JWT                                             |
+| GET    | `/api/auth/me`                             | Return the authenticated user                                        |
+| GET    | `/api/problems`                            | List published problems                                              |
+| GET    | `/api/problems/:id`                        | Get a problem without hidden tests                                   |
+| POST   | `/api/problems`                            | Create a problem (admin only)                                        |
+| GET    | `/api/problems/:id/test-cases`             | List test-case revisions (admin only)                                |
+| POST   | `/api/problems/:id/test-cases`             | Create a test case and its version 1 (admin only)                    |
+| PATCH  | `/api/problems/:id/test-cases/:testCaseId` | Add a test-case revision using `expectedVersion` (admin only)        |
+| POST   | `/api/submissions`                         | Save and enqueue a submission (JWT required; priority is admin-only) |
+| GET    | `/api/submissions`                         | List the authenticated user's submissions                            |
+| GET    | `/api/submissions/:id`                     | Read one of the authenticated user's submissions                     |
+| POST   | `/api/submissions/:id/cancel`              | Cancel an owned queued or active submission                          |
+| POST   | `/api/submissions/:id/rerun`               | Create a new run from a completed owned execution                    |
 
 ## Submission lifecycle contract
 
@@ -89,7 +93,7 @@ Retries can return any active state to `QUEUED` while the current lease is still
 
 ## Current execution support
 
-The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit execution profiles. It records compile or syntax-check outcomes and per-test verdicts. Test input and expected output are never returned from the submission API or realtime events. Persisted worker heartbeats power the status page, while expiring submission leases allow stale-job recovery.
+The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit execution profiles. It records compile or syntax-check outcomes and per-test verdicts. Each execution captures its source hash, profile, Docker image identity, and exact test-case revisions. Owners can re-run a completed submission without replacing the original result. Test input and expected output are never returned from the submission API or realtime events. Persisted worker heartbeats power the status page, while expiring submission leases allow stale-job recovery.
 
 ## Security note
 
@@ -105,7 +109,8 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Each lang
 - [Failure handling](docs/failure-handling.md)
 - [Database design](docs/database.md)
 - [Observability](docs/observability.md)
+- [Reproducibility](docs/reproducibility.md)
 
 ## Next phase
 
-Phases 5–7 are implemented: bounded retries, dead-letter handling, lease-based recovery, cancellation, FIFO/priority capability-aware scheduling, structured logs, Prometheus metrics, Grafana dashboards, and readiness endpoints. Phase 8 will add immutable execution metadata, test-case versioning, and re-running submissions while preserving original results.
+Phases 5–8 are implemented: bounded retries, lease-based recovery, scheduling, observability, immutable execution provenance, test-case revisions, and re-runs that preserve prior results. Phase 9 is the optional contests and leaderboard milestone, after the core execution path remains stable.

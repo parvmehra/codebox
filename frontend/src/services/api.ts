@@ -78,6 +78,27 @@ export type SubmissionDetails = SubmissionSummary & {
   sourceCode: string;
   errorMessage: string | null;
   testResults: SubmissionTestResult[];
+  rerunOfExecutionId: string | null;
+  executions: ExecutionMetadata[];
+};
+
+export type ExecutionMetadata = {
+  id: string;
+  attemptNumber: number;
+  languageVersion: string;
+  dockerImage: string;
+  dockerImageDigest: string | null;
+  dockerImageId: string | null;
+  sourceCodeSha256: string | null;
+  profileSnapshot: unknown;
+  timeLimitMs: number;
+  memoryLimitMb: number;
+  startedAt: string;
+  completedAt: string | null;
+  executionTimeMs: number | null;
+  memoryUsedKb: number | null;
+  testCases: { testIndex: number; testCaseVersion: number }[];
+  testResults: SubmissionTestResult[];
 };
 
 export type WorkerStatus = {

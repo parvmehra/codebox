@@ -1,4 +1,5 @@
 import { SubmissionLanguage } from '@prisma/client';
+import { z } from 'zod';
 
 export type LanguageProfile = {
   language: SubmissionLanguage;
@@ -16,6 +17,27 @@ export type LanguageProfile = {
   outputLimitBytes: number;
   requiresExecutableTmpfs: boolean;
 };
+
+const languageProfileSnapshotSchema = z.object({
+  language: z.nativeEnum(SubmissionLanguage),
+  languageVersion: z.string(),
+  dockerImage: z.string(),
+  sourceFileName: z.string(),
+  compileCommand: z.array(z.string()),
+  runCommand: z.array(z.string()),
+  compileLimitMs: z.number().int().positive(),
+  timeLimitMs: z.number().int().positive(),
+  memoryLimitMb: z.number().int().positive(),
+  networkPolicy: z.literal('none'),
+  pidsLimit: z.number().int().positive(),
+  sourceLimitBytes: z.number().int().positive(),
+  outputLimitBytes: z.number().int().positive(),
+  requiresExecutableTmpfs: z.boolean(),
+});
+
+export function restoreLanguageProfile(snapshot: unknown): LanguageProfile {
+  return languageProfileSnapshotSchema.parse(snapshot);
+}
 
 const defaultLimits = {
   compileLimitMs: 15_000,

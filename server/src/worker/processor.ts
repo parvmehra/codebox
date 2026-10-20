@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { SubmissionStatus } from '@prisma/client';
 import { prisma } from '../database/prisma.js';
 import { logger } from '../observability/logger.js';
@@ -14,7 +14,11 @@ import {
   type ExecutionResult,
   SourceSizeLimitError,
 } from './docker-executor.js';
-import { getLanguageProfile, UnsupportedLanguageError } from './language-profile.js';
+import {
+  getLanguageProfile,
+  restoreLanguageProfile,
+  UnsupportedLanguageError,
+} from './language-profile.js';
 
 const log = logger.child({ component: 'submission-processor' });
 
@@ -131,7 +135,26 @@ export async function processSubmission(
           select: {
             testCases: {
               orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-              select: { id: true, input: true, expectedOut: true },
+              select: { id: true, version: true },
+            },
+          },
+        },
+        rerunOfExecution: {
+          select: {
+            dockerImage: true,
+            dockerImageDigest: true,
+            dockerImageId: true,
+            languageVersion: true,
+            timeLimitMs: true,
+            memoryLimitMb: true,
+            profileSnapshot: true,
+            testCases: {
+              orderBy: { testIndex: 'asc' },
+              select: {
+                testCaseId: true,
+                testCaseVersion: true,
+                testCase: { select: { input: true, expectedOut: true } },
+              },
             },
           },
         },
@@ -157,28 +180,64 @@ export async function processSubmission(
       status: currentStatus,
     });
 
-    const profile = getLanguageProfile(submission.language);
-    if (submission.problem.testCases.length === 0) {
+    const sourceExecution = submission.rerunOfExecution;
+    const profile = sourceExecution?.profileSnapshot
+      ? restoreLanguageProfile(sourceExecution.profileSnapshot)
+      : getLanguageProfile(submission.language);
+    if (profile.language !== submission.language) {
+      throw new Error('The recorded language profile does not match the submission language.');
+    }
+
+    const testCases = sourceExecution
+      ? sourceExecution.testCases.map(({ testCaseId, testCaseVersion, testCase }) => ({
+          id: testCaseId,
+          version: testCaseVersion,
+          ...testCase,
+        }))
+      : await loadCurrentTestCaseVersions(submission.problem.testCases);
+    if (testCases.length === 0) {
       throw new Error('The selected problem has no test cases.');
     }
 
+    const imageReference = sourceExecution
+      ? (sourceExecution.dockerImageDigest ??
+        sourceExecution.dockerImageId ??
+        sourceExecution.dockerImage)
+      : profile.dockerImage;
     const execution = await prisma.execution.create({
       data: {
         submissionId,
         attemptNumber,
-        languageVersion: profile.languageVersion,
-        dockerImage: profile.dockerImage,
-        timeLimitMs: profile.timeLimitMs,
-        memoryLimitMb: profile.memoryLimitMb,
+        languageVersion: sourceExecution?.languageVersion ?? profile.languageVersion,
+        dockerImage: sourceExecution?.dockerImage ?? profile.dockerImage,
+        dockerImageDigest: sourceExecution?.dockerImageDigest,
+        dockerImageId: sourceExecution?.dockerImageId,
+        sourceCodeSha256: createHash('sha256').update(submission.sourceCode, 'utf8').digest('hex'),
+        profileSnapshot: profile as unknown as Prisma.InputJsonValue,
+        timeLimitMs: sourceExecution?.timeLimitMs ?? profile.timeLimitMs,
+        memoryLimitMb: sourceExecution?.memoryLimitMb ?? profile.memoryLimitMb,
+        testCases: {
+          create: testCases.map(({ id, version }, index) => ({
+            testIndex: index + 1,
+            testCase: { connect: { testCaseId_version: { testCaseId: id, version } } },
+          })),
+        },
       },
-      select: { id: true },
+      select: { id: true, testCases: { select: { id: true, testIndex: true } } },
     });
     executionId = execution.id;
+    const executionTestCaseIds = new Map(
+      execution.testCases.map(({ id, testIndex }) => [testIndex, id]),
+    );
 
     const result = await executeSubmission(profile, {
       sourceCode: submission.sourceCode,
-      testCases: submission.problem.testCases,
+      testCases,
+      imageReference,
       signal,
+      onImageIdentity: async (identity) => {
+        await prisma.execution.update({ where: { id: execution.id }, data: identity });
+      },
       onPhase: async (nextStatus) => {
         await transitionSubmission(submissionId, currentStatus, nextStatus, leaseToken);
         currentStatus = nextStatus;
@@ -195,7 +254,11 @@ export async function processSubmission(
       onTestResult: async (testResult) => {
         await renewLease(submissionId, currentStatus, leaseToken);
         await prisma.executionTestResult.create({
-          data: { executionId: execution.id, ...testResult },
+          data: {
+            executionId: execution.id,
+            executionTestCaseId: executionTestCaseIds.get(testResult.testIndex),
+            ...testResult,
+          },
         });
         publishSafely(publishEvent, {
           type: 'submission:test-progress',
@@ -456,5 +519,32 @@ async function persistExecutionSummary(
       executionTimeMs: result.executionTimeMs,
       memoryUsedKb: result.memoryUsedKb,
     },
+  });
+}
+
+async function loadCurrentTestCaseVersions(
+  currentCases: Array<{ id: string; version: number }>,
+): Promise<Array<{ id: string; version: number; input: string; expectedOut: string }>> {
+  const versions = await prisma.testCaseVersion.findMany({
+    where: {
+      OR: currentCases.map(({ id, version }) => ({ testCaseId: id, version })),
+    },
+    select: { testCaseId: true, version: true, input: true, expectedOut: true },
+  });
+  const byVersion = new Map(
+    versions.map((version) => [`${version.testCaseId}:${version.version}`, version]),
+  );
+
+  return currentCases.map(({ id, version }) => {
+    const snapshot = byVersion.get(`${id}:${version}`);
+    if (!snapshot) {
+      throw new Error(`Test case ${id} version ${version} has no immutable snapshot.`);
+    }
+    return {
+      id,
+      version,
+      input: snapshot.input,
+      expectedOut: snapshot.expectedOut,
+    };
   });
 }

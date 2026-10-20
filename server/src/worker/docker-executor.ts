@@ -39,9 +39,14 @@ export type ExecutionResult = {
 export type ExecuteSubmissionOptions = {
   sourceCode: string;
   testCases: ExecutionTestCase[];
+  imageReference?: string;
   signal?: AbortSignal;
   onPhase: (status: Extract<SubmissionStatus, 'COMPILING' | 'RUNNING'>) => Promise<void>;
   onTestResult: (result: PersistedTestResult) => Promise<void>;
+  onImageIdentity?: (identity: {
+    dockerImageId: string;
+    dockerImageDigest: string | null;
+  }) => Promise<void>;
 };
 
 export type DockerCommandResult = {
@@ -91,7 +96,11 @@ export class SourceSizeLimitError extends Error {
   }
 }
 
-export function buildSandboxCreateArgs(containerName: string, profile: LanguageProfile): string[] {
+export function buildSandboxCreateArgs(
+  containerName: string,
+  profile: LanguageProfile,
+  imageReference = profile.dockerImage,
+): string[] {
   return [
     'create',
     '--name',
@@ -128,7 +137,7 @@ export function buildSandboxCreateArgs(containerName: string, profile: LanguageP
       : []),
     '--entrypoint',
     '/usr/bin/sleep',
-    profile.dockerImage,
+    imageReference,
     'infinity',
   ];
 }
@@ -169,14 +178,47 @@ export async function executeSubmission(
   let containerId: string | undefined;
 
   try {
-    const create = await runCommand(buildSandboxCreateArgs(containerName, profile), {
-      timeoutMs: 30_000,
-      signal: options.signal,
-    });
+    const imageReference = options.imageReference ?? profile.dockerImage;
+    if (imageReference !== profile.dockerImage) {
+      await ensureImageReference(imageReference, runCommand, options.signal);
+    }
+
+    const create = await runCommand(
+      buildSandboxCreateArgs(containerName, profile, imageReference),
+      {
+        timeoutMs: 30_000,
+        signal: options.signal,
+      },
+    );
     requireDockerSuccess(create, 'create isolated execution container');
     containerId = create.stdout.trim();
     if (!containerId)
       throw new DockerCommandError('Docker did not return the execution container ID.');
+
+    if (options.onImageIdentity) {
+      const imageIdResult = await runCommand(['inspect', '--format', '{{.Image}}', containerId], {
+        timeoutMs: 15_000,
+        signal: options.signal,
+      });
+      requireDockerSuccess(imageIdResult, 'inspect isolated execution image');
+      const dockerImageId = imageIdResult.stdout.trim();
+      if (!dockerImageId)
+        throw new DockerCommandError('Docker did not return the isolated image ID.');
+
+      const digestResult = await runCommand(
+        ['image', 'inspect', '--format', '{{json .RepoDigests}}', dockerImageId],
+        { timeoutMs: 15_000, signal: options.signal },
+      );
+      requireDockerSuccess(digestResult, 'inspect isolated image digest');
+      const repoDigests = JSON.parse(digestResult.stdout.trim()) as unknown;
+      if (!Array.isArray(repoDigests) || repoDigests.some((digest) => typeof digest !== 'string')) {
+        throw new DockerCommandError('Docker returned an invalid image digest list.');
+      }
+      await options.onImageIdentity({
+        dockerImageId,
+        dockerImageDigest: (repoDigests[0] as string | undefined) ?? null,
+      });
+    }
 
     const start = await runCommand(['start', containerId], {
       timeoutMs: 30_000,
@@ -304,6 +346,24 @@ export async function executeSubmission(
       log.error({ containerName, error }, 'Could not clean up execution container');
     }
   }
+}
+
+async function ensureImageReference(
+  imageReference: string,
+  runCommand: DockerCommandRunner,
+  signal?: AbortSignal,
+): Promise<void> {
+  const inspect = await runCommand(['image', 'inspect', imageReference], {
+    timeoutMs: 15_000,
+    signal,
+  });
+  if (inspect.exitCode === 0) return;
+
+  const pull = await runCommand(['pull', '--quiet', imageReference], {
+    timeoutMs: IMAGE_PULL_TIMEOUT_MS,
+    signal,
+  });
+  requireDockerSuccess(pull, `pull recorded execution image ${imageReference}`);
 }
 
 function completedResult(

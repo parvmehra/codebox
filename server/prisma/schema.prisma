@@ -89,41 +89,60 @@ model TestCase {
   input            String
   expectedOut      String
   isHidden         Boolean               @default(true)
+  version          Int                   @default(1)
   createdAt        DateTime              @default(now())
   problem          Problem               @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  versions         TestCaseVersion[]
   executionResults ExecutionTestResult[]
 
   @@index([problemId])
 }
 
+model TestCaseVersion {
+  testCaseId  String
+  version     Int
+  input       String
+  expectedOut String
+  isHidden    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  testCase    TestCase            @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  executions  ExecutionTestCase[]
+
+  @@id([testCaseId, version])
+  @@index([testCaseId, createdAt])
+}
+
 model Submission {
-  id              String             @id @default(uuid())
-  userId          String
-  problemId       String
-  language        SubmissionLanguage
-  sourceCode      String             @db.Text
-  status          SubmissionStatus   @default(QUEUED)
-  priority        Int                @default(0)
-  attemptCount    Int                @default(0)
-  workerId        String?
-  leaseToken      String?
-  leaseExpiresAt  DateTime?
-  lastEnqueuedAt  DateTime           @default(now())
-  needsDispatch   Boolean            @default(false)
-  executionTimeMs Int?
-  memoryUsedKb    Int?
-  errorMessage    String?            @db.Text
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
-  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  problem         Problem            @relation(fields: [problemId], references: [id], onDelete: Restrict)
-  executions      Execution[]
+  id                 String             @id @default(uuid())
+  userId             String
+  problemId          String
+  language           SubmissionLanguage
+  sourceCode         String             @db.Text
+  status             SubmissionStatus   @default(QUEUED)
+  priority           Int                @default(0)
+  attemptCount       Int                @default(0)
+  workerId           String?
+  leaseToken         String?
+  leaseExpiresAt     DateTime?
+  lastEnqueuedAt     DateTime           @default(now())
+  needsDispatch      Boolean            @default(false)
+  rerunOfExecutionId String?
+  executionTimeMs    Int?
+  memoryUsedKb       Int?
+  errorMessage       String?            @db.Text
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problem            Problem            @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  executions         Execution[]
+  rerunOfExecution   Execution?         @relation("ExecutionReruns", fields: [rerunOfExecutionId], references: [id], onDelete: Restrict)
 
   @@index([userId, createdAt])
   @@index([problemId, status])
   @@index([status, leaseExpiresAt])
   @@index([status, lastEnqueuedAt])
   @@index([status, needsDispatch, lastEnqueuedAt])
+  @@index([rerunOfExecutionId])
 }
 
 model Worker {
@@ -152,34 +171,56 @@ model WorkerHeartbeat {
 }
 
 model Execution {
-  id              String                @id @default(uuid())
-  submissionId    String
-  attemptNumber   Int                   @default(1)
-  languageVersion String
-  dockerImage     String
-  timeLimitMs     Int
-  memoryLimitMb   Int
-  startedAt       DateTime              @default(now())
-  completedAt     DateTime?
-  executionTimeMs Int?
-  memoryUsedKb    Int?
-  submission      Submission            @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  testResults     ExecutionTestResult[]
+  id                String                @id @default(uuid())
+  submissionId      String
+  attemptNumber     Int                   @default(1)
+  languageVersion   String
+  dockerImage       String
+  dockerImageDigest String?
+  dockerImageId     String?
+  sourceCodeSha256  String?
+  profileSnapshot   Json?
+  timeLimitMs       Int
+  memoryLimitMb     Int
+  startedAt         DateTime              @default(now())
+  completedAt       DateTime?
+  executionTimeMs   Int?
+  memoryUsedKb      Int?
+  submission        Submission            @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reruns            Submission[]          @relation("ExecutionReruns")
+  testCases         ExecutionTestCase[]
+  testResults       ExecutionTestResult[]
 
   @@unique([submissionId, attemptNumber])
   @@index([submissionId, startedAt])
 }
 
-model ExecutionTestResult {
-  id              String           @id @default(uuid())
+model ExecutionTestCase {
+  id              String               @id @default(cuid())
   executionId     String
-  testCaseId      String?
   testIndex       Int
-  status          TestResultStatus
-  executionTimeMs Int?
-  errorMessage    String?          @db.Text
-  execution       Execution        @relation(fields: [executionId], references: [id], onDelete: Cascade)
-  testCase        TestCase?        @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  testCaseId      String
+  testCaseVersion Int
+  execution       Execution            @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  testCase        TestCaseVersion      @relation(fields: [testCaseId, testCaseVersion], references: [testCaseId, version], onDelete: Restrict)
+  result          ExecutionTestResult?
+
+  @@unique([executionId, testIndex])
+  @@index([testCaseId, testCaseVersion])
+}
+
+model ExecutionTestResult {
+  id                  String             @id @default(uuid())
+  executionId         String
+  testCaseId          String?
+  testIndex           Int
+  executionTestCaseId String?            @unique
+  status              TestResultStatus
+  executionTimeMs     Int?
+  errorMessage        String?            @db.Text
+  execution           Execution          @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  testCase            TestCase?          @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  executionTestCase   ExecutionTestCase? @relation(fields: [executionTestCaseId], references: [id], onDelete: SetNull)
 
   @@unique([executionId, testIndex])
   @@index([testCaseId])

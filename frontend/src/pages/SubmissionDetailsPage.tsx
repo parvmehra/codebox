@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type SubmissionDetails, type SubmissionStatus } from '../services/api';
 import { useSubmissionRealtime } from '../hooks/useSubmissionRealtime';
 
@@ -32,6 +32,7 @@ const statusDescriptions: Record<SubmissionStatus, string> = {
 
 export function SubmissionDetailsPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const realtime = useSubmissionRealtime(id);
   const cancelSubmission = useMutation({
@@ -41,6 +42,14 @@ export function SubmissionDetailsPage() {
         queryClient.invalidateQueries({ queryKey: ['submission', id] }),
         queryClient.invalidateQueries({ queryKey: ['submissions'] }),
       ]);
+    },
+  });
+  const rerunSubmission = useMutation({
+    mutationFn: async () =>
+      (await api.post<{ data: { id: string } }>(`/submissions/${id}/rerun`)).data.data,
+    onSuccess: async (rerun) => {
+      await queryClient.invalidateQueries({ queryKey: ['submissions'] });
+      navigate(`/submissions/${rerun.id}`);
     },
   });
   const { data, isPending, isError } = useQuery({
@@ -114,6 +123,25 @@ export function SubmissionDetailsPage() {
           The submission could not be cancelled. Its latest status is shown below.
         </p>
       )}
+      {terminalStatuses.has(data.status) && data.executions[0]?.completedAt && (
+        <button
+          className="button rerun-submission"
+          onClick={() => rerunSubmission.mutate()}
+          disabled={rerunSubmission.isPending}
+        >
+          {rerunSubmission.isPending ? 'Queueing re-run…' : 'Re-run this submission'}
+        </button>
+      )}
+      {rerunSubmission.isError && (
+        <p className="error execution-error" role="alert">
+          The re-run could not be queued. The original result has been kept.
+        </p>
+      )}
+      {data.rerunOfExecutionId && (
+        <p className="execution-provenance">
+          Re-run of execution <code>{data.rerunOfExecutionId}</code>
+        </p>
+      )}
       {data.status === 'RUNNING' && (
         <p className="test-progress-summary" aria-live="polite">
           {data.testResults.length === 0
@@ -150,6 +178,50 @@ export function SubmissionDetailsPage() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+      {data.executions.length > 0 && (
+        <section className="execution-history">
+          <h2>Reproducibility record</h2>
+          {data.executions.map((execution) => (
+            <article className="execution-record" key={execution.id}>
+              <h3>
+                Attempt {execution.attemptNumber} · {execution.languageVersion}
+              </h3>
+              <dl>
+                <div>
+                  <dt>Runtime image</dt>
+                  <dd>
+                    <code>{execution.dockerImage}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Immutable image reference</dt>
+                  <dd>
+                    <code>
+                      {execution.dockerImageDigest ?? execution.dockerImageId ?? 'not recorded'}
+                    </code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Source SHA-256</dt>
+                  <dd>
+                    <code>
+                      {execution.sourceCodeSha256 ?? 'not recorded for this older execution'}
+                    </code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Test versions</dt>
+                  <dd>
+                    {execution.testCases
+                      .map(({ testIndex, testCaseVersion }) => `#${testIndex} v${testCaseVersion}`)
+                      .join(', ') || 'not recorded'}
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          ))}
         </section>
       )}
       <section className="source-panel">

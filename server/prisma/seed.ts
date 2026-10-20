@@ -3,14 +3,7 @@ const prisma = new PrismaClient();
 async function main() {
   await prisma.problem.upsert({
     where: { slug: 'two-sum' },
-    update: {
-      testCases: {
-        updateMany: {
-          where: { input: '4\\n2 7 11 15\\n9' },
-          data: { input: '4\n2 7 11 15\n9' },
-        },
-      },
-    },
+    update: {},
     create: {
       slug: 'two-sum',
       title: 'Two Sum',
@@ -22,8 +15,49 @@ async function main() {
       outputFormat: 'Two zero-based indices.',
       examples: [{ input: 'nums = [2, 7, 11, 15], target = 9', output: '[0, 1]' }],
       isPublished: true,
-      testCases: { create: [{ input: '4\n2 7 11 15\n9', expectedOut: '0 1', isHidden: false }] },
+      testCases: {
+        create: [
+          {
+            input: '4\n2 7 11 15\n9',
+            expectedOut: '0 1',
+            isHidden: false,
+            versions: {
+              create: { version: 1, input: '4\n2 7 11 15\n9', expectedOut: '0 1', isHidden: false },
+            },
+          },
+        ],
+      },
     },
   });
+
+  const problem = await prisma.problem.findUniqueOrThrow({
+    where: { slug: 'two-sum' },
+    select: { id: true },
+  });
+  const legacyInput = String.raw`4\n2 7 11 15\n9`;
+  const canonicalInput = '4\n2 7 11 15\n9';
+  const legacyCases = await prisma.testCase.findMany({
+    where: { problemId: problem.id, input: legacyInput },
+    select: { id: true, version: true, expectedOut: true, isHidden: true },
+  });
+  for (const testCase of legacyCases) {
+    const nextVersion = testCase.version + 1;
+    await prisma.$transaction(async (transaction) => {
+      const updated = await transaction.testCase.updateMany({
+        where: { id: testCase.id, version: testCase.version },
+        data: { input: canonicalInput, version: nextVersion },
+      });
+      if (updated.count !== 1) return;
+      await transaction.testCaseVersion.create({
+        data: {
+          testCaseId: testCase.id,
+          version: nextVersion,
+          input: canonicalInput,
+          expectedOut: testCase.expectedOut,
+          isHidden: testCase.isHidden,
+        },
+      });
+    });
+  }
 }
 main().finally(() => prisma.$disconnect());

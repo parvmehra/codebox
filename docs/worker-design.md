@@ -15,6 +15,8 @@ The worker is a separate Node.js process. `WORKER_LANGUAGES` lists the languages
 
 The worker checks all four images at startup and pulls missing images in parallel. Interpreted languages also pass through `COMPILING` for syntax validation. C++ writes its binary to a private executable tmpfs because the source workspace is mounted `noexec`.
 
+Each execution stores the profile JSON, source SHA-256, Docker image tag, container image ID, and registry digest when available. It also pins an ordered list of immutable test-case revisions. The detail API exposes this metadata to the submission owner without exposing test input or expected output.
+
 ## Claim, lease, and acknowledgement
 
 The worker conditionally changes `QUEUED` to `ASSIGNED`, increments `attemptCount`, and writes a random lease token with a 60-second expiry. The database claim is the idempotency gate: a duplicate delivery cannot claim an active or terminal submission. The attempt count supplies a unique `Execution.attemptNumber`.
@@ -22,6 +24,8 @@ The worker conditionally changes `QUEUED` to `ASSIGNED`, increments `attemptCoun
 The worker renews leases and persists its own heartbeat every 15 seconds. It acknowledges a normal delivery only after the final result is persisted. On a retryable failure, it returns a still-owned submission to `QUEUED`, publishes a durable copy to the five-second retry queue, waits for publisher confirmation, then acknowledges the original. Three execution attempts are allowed. Invalid or exhausted messages go to the durable dead-letter queue.
 
 The API recovery loop finds expired leases every 15 seconds. It fences off the former attempt by matching the lease token, closes the incomplete execution record, and either dispatches a new attempt or marks the submission `SYSTEM_ERROR` when its retry budget is used.
+
+A user-requested re-run is a new submission linked to its source execution. It does not reset the original status or overwrite its results. The worker uses the stored profile and test revisions and prefers the image digest (then image ID) when creating the new container. Automatic retries remain attempts of the same submission and use the normal retry budget.
 
 ## Cancellation and shutdown
 
@@ -47,6 +51,8 @@ Set `SCHEDULER_STRATEGY=FIFO` for the default arrival order, or `PRIORITY` to ho
 - **Why this design:** the database lease is a small, explainable fencing mechanism. RabbitMQ handles delivery and retry timing, while PostgreSQL remains authoritative for job ownership and results.
 - **Why C++ has a second tmpfs:** the source workspace stays `noexec`; the compiler writes its output to a separate, bounded executable mount that is removed with the container.
 - **Important failure cases:** a stale worker can continue briefly after losing its lease, but its conditional writes fail; cancelled and expired leases prevent its result from replacing a newer state.
+- **Image retention limit:** Docker records an immutable image digest when the registry supplies one and always records the local image ID. If a legacy image has no digest and its image ID has been removed from the Docker host, an exact re-run cannot recreate that image from the tag alone.
+- **Interview question — How does the platform reproduce a past result?** It records source hash, full language profile, immutable image identity, and the exact version of every test case, then links a new execution to those saved inputs.
 - **Scheduler failure cases:** ingress and capability queues are durable; an unacknowledged ingress delivery returns to RabbitMQ if the API exits. Jobs wait and retry assignment when no fresh capable worker is registered.
 - **Interview question — Why prefetch one?** It bounds unacknowledged work and makes per-worker active-job reporting straightforward.
 - **Interview question — How are retries idempotent?** A conditional `QUEUED` claim and a unique execution attempt number prevent two deliveries from creating the same active attempt.

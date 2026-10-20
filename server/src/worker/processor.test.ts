@@ -1,9 +1,11 @@
 import { SubmissionLanguage, SubmissionStatus, TestResultStatus } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { JAVA_21_PROFILE } from './language-profile.js';
 
 const mocks = vi.hoisted(() => ({
   submissionUpdateMany: vi.fn(),
   submissionFindUnique: vi.fn(),
+  testCaseVersionFindMany: vi.fn(),
   executionCreate: vi.fn(),
   executionUpdate: vi.fn(),
   testResultCreate: vi.fn(),
@@ -17,6 +19,7 @@ vi.doMock('../database/prisma.js', () => ({
       updateMany: mocks.submissionUpdateMany,
       findUnique: mocks.submissionFindUnique,
     },
+    testCaseVersion: { findMany: mocks.testCaseVersionFindMany },
     execution: {
       create: mocks.executionCreate,
       update: mocks.executionUpdate,
@@ -45,28 +48,41 @@ beforeEach(() => {
     language: SubmissionLanguage.JAVA,
     sourceCode: 'public class Main {}',
     attemptCount: 1,
-    problem: { testCases: [{ id: testCaseId, input: '1', expectedOut: '1' }] },
+    problem: { testCases: [{ id: testCaseId, version: 1 }] },
+    rerunOfExecution: null,
   });
-  mocks.executionCreate.mockResolvedValue({ id: executionId });
+  mocks.testCaseVersionFindMany.mockResolvedValue([
+    { testCaseId, version: 1, input: '1', expectedOut: '1' },
+  ]);
+  mocks.executionCreate.mockResolvedValue({
+    id: executionId,
+    testCases: [{ id: 'execution-test-case-id', testIndex: 1 }],
+  });
   mocks.executionUpdate.mockResolvedValue({});
   mocks.testResultCreate.mockResolvedValue({});
-  mocks.executeSubmission.mockImplementation(async (_profile, { onPhase, onTestResult }) => {
-    await onPhase(SubmissionStatus.COMPILING);
-    await onPhase(SubmissionStatus.RUNNING);
-    await onTestResult({
-      testCaseId,
-      testIndex: 1,
-      status: TestResultStatus.PASSED,
-      executionTimeMs: 12,
-      errorMessage: null,
-    });
-    return {
-      status: SubmissionStatus.ACCEPTED,
-      executionTimeMs: 12,
-      memoryUsedKb: null,
-      errorMessage: null,
-    };
-  });
+  mocks.executeSubmission.mockImplementation(
+    async (_profile, { onPhase, onTestResult, onImageIdentity }) => {
+      await onImageIdentity?.({
+        dockerImageId: 'sha256:immutable-image-id',
+        dockerImageDigest: 'eclipse-temurin@sha256:immutable-digest',
+      });
+      await onPhase(SubmissionStatus.COMPILING);
+      await onPhase(SubmissionStatus.RUNNING);
+      await onTestResult({
+        testCaseId,
+        testIndex: 1,
+        status: TestResultStatus.PASSED,
+        executionTimeMs: 12,
+        errorMessage: null,
+      });
+      return {
+        status: SubmissionStatus.ACCEPTED,
+        executionTimeMs: 12,
+        memoryUsedKb: null,
+        errorMessage: null,
+      };
+    },
+  );
 });
 
 describe('submission worker processor', () => {
@@ -91,8 +107,18 @@ describe('submission worker processor', () => {
         attemptNumber: 1,
         languageVersion: '21',
         dockerImage: 'eclipse-temurin:21-jdk-jammy',
+        sourceCodeSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        profileSnapshot: expect.objectContaining({ languageVersion: '21' }),
+        testCases: {
+          create: [
+            {
+              testIndex: 1,
+              testCase: { connect: { testCaseId_version: { testCaseId, version: 1 } } },
+            },
+          ],
+        },
       }),
-      select: { id: true },
+      select: { id: true, testCases: { select: { id: true, testIndex: true } } },
     });
     expect(mocks.executeSubmission).toHaveBeenCalledWith(
       expect.objectContaining({ language: SubmissionLanguage.JAVA }),
@@ -101,11 +127,19 @@ describe('submission worker processor', () => {
     expect(mocks.testResultCreate).toHaveBeenCalledWith({
       data: {
         executionId,
+        executionTestCaseId: 'execution-test-case-id',
         testCaseId,
         testIndex: 1,
         status: TestResultStatus.PASSED,
         executionTimeMs: 12,
         errorMessage: null,
+      },
+    });
+    expect(mocks.executionUpdate).toHaveBeenCalledWith({
+      where: { id: executionId },
+      data: {
+        dockerImageId: 'sha256:immutable-image-id',
+        dockerImageDigest: 'eclipse-temurin@sha256:immutable-digest',
       },
     });
     expect(mocks.publishEvent.mock.calls.map(([event]) => event.type)).toEqual([
@@ -125,6 +159,67 @@ describe('submission worker processor', () => {
     });
     expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('input');
     expect(mocks.publishEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('expectedOut');
+  });
+
+  it('re-runs against the original immutable test versions and recorded image', async () => {
+    mocks.submissionFindUnique.mockResolvedValue({
+      status: SubmissionStatus.ASSIGNED,
+      userId: 'a25145ab-21aa-4d20-9e08-3a2b4d59110f',
+      language: SubmissionLanguage.JAVA,
+      sourceCode: 'public class Main {}',
+      attemptCount: 1,
+      problem: { testCases: [] },
+      rerunOfExecution: {
+        dockerImage: 'eclipse-temurin:21-jdk-jammy',
+        dockerImageDigest: 'eclipse-temurin@sha256:recorded-digest',
+        dockerImageId: 'sha256:recorded-image-id',
+        languageVersion: '21',
+        timeLimitMs: 2_000,
+        memoryLimitMb: 256,
+        profileSnapshot: JAVA_21_PROFILE,
+        testCases: [
+          {
+            testCaseId,
+            testCaseVersion: 4,
+            testCase: { input: 'original input', expectedOut: 'original result' },
+          },
+        ],
+      },
+    });
+
+    await processSubmission(submissionId, mocks.publishEvent);
+
+    expect(mocks.executionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          dockerImage: 'eclipse-temurin:21-jdk-jammy',
+          dockerImageDigest: 'eclipse-temurin@sha256:recorded-digest',
+          dockerImageId: 'sha256:recorded-image-id',
+          testCases: {
+            create: [
+              {
+                testIndex: 1,
+                testCase: {
+                  connect: { testCaseId_version: { testCaseId, version: 4 } },
+                },
+              },
+            ],
+          },
+        }),
+      }),
+    );
+    expect(mocks.executeSubmission.mock.calls[0]?.[0]).toEqual(JAVA_21_PROFILE);
+    expect(mocks.executeSubmission.mock.calls[0]?.[1]).toMatchObject({
+      imageReference: 'eclipse-temurin@sha256:recorded-digest',
+      testCases: [
+        {
+          id: testCaseId,
+          version: 4,
+          input: 'original input',
+          expectedOut: 'original result',
+        },
+      ],
+    });
   });
 
   it('releases a lease after Docker or persistence failures so RabbitMQ can retry', async () => {
