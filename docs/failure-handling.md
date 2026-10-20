@@ -17,6 +17,8 @@ The worker owns a 60-second lease while processing a submission and renews it in
 
 Worker snapshots and heartbeat history are stored in PostgreSQL. The status endpoint counts a worker as online only when its last heartbeat is no more than 45 seconds old. Heartbeat history is retained for seven days.
 
+`/health/live` reports process liveness without checking dependencies. `/health/ready` checks PostgreSQL and active scheduler consumers before the API accepts traffic; the worker's readiness endpoint stays unavailable until it is consuming and can persist heartbeats. Prometheus scrapes each process independently, so target health remains visible when an application readiness check fails.
+
 ## Cancellation and shutdown
 
 Users can cancel their own queued or active submissions. The API changes the database status to `CANCELLED` first and then signals workers over a transient RabbitMQ control exchange. Workers also check the database for cancellation, so a missed control event does not leave an execution running indefinitely. Docker commands receive an abort signal; cancellation kills the isolated container and its temporary resources are removed in the `finally` cleanup.

@@ -40,10 +40,23 @@ services:
       JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-before-production}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-code_platform}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672
       SCHEDULER_STRATEGY: ${SCHEDULER_STRATEGY:-FIFO}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       PORT: 4000
       CLIENT_ORIGIN: http://localhost:5173
     ports:
       - '4000:4000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,10 +71,26 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-code_platform}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-code_platform}?schema=public
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-code_platform}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672
       WORKER_LANGUAGES: ${WORKER_LANGUAGES:-JAVA,PYTHON,CPP,NODEJS}
+      WORKER_METRICS_PORT: 9101
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+    expose:
+      - '9101'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:9101/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10m
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +99,41 @@ services:
       api:
         condition: service_started
     stop_grace_period: 30s
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-change-me}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
     restart: unless-stopped
 
   frontend:
@@ -84,3 +148,5 @@ services:
 volumes:
   postgres_data:
   rabbitmq_data:
+  prometheus_data:
+  grafana_data:

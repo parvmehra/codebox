@@ -3,6 +3,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/auth.js';
+import { logger } from '../../observability/logger.js';
+import {
+  submissionEnqueueFailuresTotal,
+  submissionEnqueuesTotal,
+} from '../../observability/metrics.js';
 import {
   publishSubmission,
   publishSubmissionCancellation,
@@ -37,6 +42,7 @@ const cancellableStatuses = [
 ] as const;
 
 export const submissionsRouter = Router();
+const log = logger.child({ component: 'submissions-api' });
 
 submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, response) => {
   const input = createSubmissionInput.parse(request.body);
@@ -70,13 +76,15 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
       updatedAt: submission.createdAt.toISOString(),
     });
   } catch (error) {
-    console.warn({ error, submissionId: submission.id }, 'Could not publish queued status event');
+    log.warn({ error, submissionId: submission.id }, 'Could not publish queued status event');
   }
 
   try {
     await publishSubmission(submission.id, submission.priority);
+    submissionEnqueuesTotal.inc({ language: submission.language });
   } catch (error) {
-    console.error({ error, submissionId: submission.id }, 'Could not publish submission job');
+    submissionEnqueueFailuresTotal.inc({ language: submission.language });
+    log.error({ error, submissionId: submission.id }, 'Could not publish submission job');
     assertSubmissionTransition(SubmissionStatus.QUEUED, SubmissionStatus.SYSTEM_ERROR);
     await prisma.submission.updateMany({
       where: { id: submission.id, status: SubmissionStatus.QUEUED },
@@ -95,7 +103,7 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
         errorMessage: 'The submission could not be queued.',
       });
     } catch (eventError) {
-      console.warn(
+      log.warn(
         { error: eventError, submissionId: submission.id },
         'Could not publish failure event',
       );
@@ -198,10 +206,10 @@ submissionsRouter.post(
       status: SubmissionStatus.CANCELLED,
       updatedAt,
     }).catch((error: unknown) => {
-      console.warn({ error, submissionId: id }, 'Could not publish cancellation event');
+      log.warn({ error, submissionId: id }, 'Could not publish cancellation event');
     });
     await publishSubmissionCancellation(id).catch((error: unknown) => {
-      console.warn({ error, submissionId: id }, 'Could not signal submission cancellation');
+      log.warn({ error, submissionId: id }, 'Could not signal submission cancellation');
     });
 
     return response.json({ data: { id, status: SubmissionStatus.CANCELLED } });

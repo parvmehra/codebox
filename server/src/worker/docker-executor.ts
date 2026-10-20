@@ -7,6 +7,9 @@ import {
   supportedLanguageProfiles,
   withTimeout,
 } from './language-profile.js';
+import { logger } from '../observability/logger.js';
+
+const log = logger.child({ component: 'docker-executor' });
 
 const INTERNAL_OUTPUT_LIMIT_BYTES = 64_000;
 const ERROR_MESSAGE_LIMIT = 4_000;
@@ -145,12 +148,12 @@ async function ensureLanguageImage(profile: LanguageProfile): Promise<void> {
   });
   if (inspect.exitCode === 0) return;
 
-  console.info({ image: profile.dockerImage }, 'Pulling language execution image');
+  log.info({ image: profile.dockerImage }, 'Pulling language execution image');
   const pull = await runDocker(['pull', '--quiet', profile.dockerImage], {
     timeoutMs: IMAGE_PULL_TIMEOUT_MS,
   });
   requireDockerSuccess(pull, `pull ${profile.language} execution image`);
-  console.info({ image: profile.dockerImage }, 'Language execution image is ready');
+  log.info({ image: profile.dockerImage }, 'Language execution image is ready');
 }
 
 export async function executeSubmission(
@@ -295,13 +298,10 @@ export async function executeSubmission(
     try {
       const cleanup = await runCommand(['rm', '--force', containerName], { timeoutMs: 15_000 });
       if (cleanup.exitCode !== 0 && !cleanup.stderr.includes('No such container')) {
-        console.error(
-          { containerName, error: cleanup.stderr },
-          'Could not remove execution container',
-        );
+        log.error({ containerName, error: cleanup.stderr }, 'Could not remove execution container');
       }
     } catch (error) {
-      console.error({ containerName, error }, 'Could not clean up execution container');
+      log.error({ containerName, error }, 'Could not clean up execution container');
     }
   }
 }

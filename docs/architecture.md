@@ -13,6 +13,8 @@ Express API + Socket.IO ─────────────► PostgreSQL
 RabbitMQ ingress ──► API scheduler ──► capability queue ──► Worker ──► temporary container
     ▲                       │                                    │
     └──── delayed retry ────┘          transient events ─────────┘
+
+Prometheus ──scrapes──► API and worker metrics ◄── Grafana dashboard
 ```
 
 ## Responsibilities
@@ -24,6 +26,7 @@ RabbitMQ ingress ──► API scheduler ──► capability queue ──► Wo
 - **Scheduler:** matches a submission language to live worker capability groups and selects the group with the lowest queued-plus-active load. The configured strategy uses FIFO by default or RabbitMQ priorities when enabled.
 - **Worker:** advertises its language capabilities, consumes only its matching group queue, claims a queued submission, selects a language profile, runs the program in Docker, persists the result, and emits progress events.
 - **Execution container:** receives only the submitted source file and test input. It has no network or host path mounts and does not receive the Docker socket.
+- **Observability:** Pino emits structured JSON logs. Prometheus scrapes bounded API and worker metrics, and Grafana provisions an operations dashboard from checked-in configuration.
 
 ## Data flow
 
@@ -35,6 +38,7 @@ RabbitMQ ingress ──► API scheduler ──► capability queue ──► Wo
 6. Each test verdict is persisted before its progress event; test input and expected output are never included in events.
 7. The API's temporary event queue forwards submission events only to the authenticated owner's Socket.IO room. The final result is persisted before the worker acknowledges the job.
 8. The frontend refreshes submission data on Socket.IO events and uses REST polling if the socket is unavailable. Persisted worker heartbeats power the status page, and the API recovers submissions whose leases expire.
+9. Prometheus scrapes the API and worker metrics endpoints; Grafana queries Prometheus for request, scheduler, worker, and scrape health panels.
 
 ## Learning notes
 

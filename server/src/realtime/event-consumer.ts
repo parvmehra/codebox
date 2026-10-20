@@ -2,7 +2,10 @@ import amqp from 'amqplib';
 import type { Channel, ChannelModel } from 'amqplib';
 import type { Server } from 'socket.io';
 import { runtimeEnv } from '../config/runtime-env.js';
+import { logger } from '../observability/logger.js';
 import { realtimeEventSchema, SUBMISSION_EVENTS_EXCHANGE } from './events.js';
+
+const log = logger.child({ component: 'realtime-consumer' });
 
 export async function startRealtimeEventConsumer(io: Server): Promise<() => Promise<void>> {
   const connection: ChannelModel = await amqp.connect(runtimeEnv.RABBITMQ_URL);
@@ -25,7 +28,7 @@ export async function startRealtimeEventConsumer(io: Server): Promise<() => Prom
         if (!message) return;
         const parsed = realtimeEventSchema.safeParse(parseMessage(message.content));
         if (!parsed.success) {
-          console.warn('Discarding an invalid real-time event.');
+          log.warn('Discarding an invalid real-time event.');
           return;
         }
 
@@ -38,7 +41,7 @@ export async function startRealtimeEventConsumer(io: Server): Promise<() => Prom
       { noAck: true },
     );
 
-    console.info('Real-time event consumer is ready');
+    log.info('Real-time event consumer is ready');
     return async () => {
       await channel?.close().catch(() => undefined);
       await connection.close().catch(() => undefined);

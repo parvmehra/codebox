@@ -1,5 +1,6 @@
 import { SubmissionStatus } from '@prisma/client';
 import { prisma } from '../../database/prisma.js';
+import { logger } from '../../observability/logger.js';
 import {
   publishSubmission,
   publishSubmissionDeadLetter,
@@ -30,6 +31,7 @@ type ExpiredSubmission = {
 
 let timer: NodeJS.Timeout | undefined;
 let recoveryPromise: Promise<void> | undefined;
+const log = logger.child({ component: 'submission-recovery' });
 
 export async function startSubmissionRecovery(): Promise<() => Promise<void>> {
   await recoverSubmissions();
@@ -82,14 +84,11 @@ async function runRecovery(now: Date): Promise<void> {
           data: { needsDispatch: false, lastEnqueuedAt: now },
         });
       } catch (error) {
-        console.error(
-          { error, submissionId: submission.id },
-          'Could not requeue recovered submission',
-        );
+        log.error({ error, submissionId: submission.id }, 'Could not requeue recovered submission');
       }
     }
   } catch (error) {
-    console.error({ error }, 'Submission recovery pass failed');
+    log.error({ error }, 'Submission recovery pass failed');
   }
 }
 
@@ -124,7 +123,7 @@ async function recoverExpiredSubmission(submission: ExpiredSubmission, now: Date
     await publishFailure(submission, now);
     await publishSubmissionDeadLetter(submission.id, 'stale-attempt-limit').catch(
       (error: unknown) => {
-        console.warn(
+        log.warn(
           { error, submissionId: submission.id },
           'Could not dead-letter exhausted stale submission',
         );
@@ -167,7 +166,7 @@ async function recoverExpiredSubmission(submission: ExpiredSubmission, now: Date
     status: SubmissionStatus.QUEUED,
     updatedAt: now.toISOString(),
   }).catch((error: unknown) => {
-    console.warn({ error, submissionId: submission.id }, 'Could not publish recovery event');
+    log.warn({ error, submissionId: submission.id }, 'Could not publish recovery event');
   });
 }
 
@@ -180,9 +179,6 @@ async function publishFailure(submission: ExpiredSubmission, now: Date): Promise
     updatedAt: now.toISOString(),
     errorMessage: 'The worker stopped responding after several attempts.',
   }).catch((error: unknown) => {
-    console.warn(
-      { error, submissionId: submission.id },
-      'Could not publish recovery failure event',
-    );
+    log.warn({ error, submissionId: submission.id }, 'Could not publish recovery failure event');
   });
 }

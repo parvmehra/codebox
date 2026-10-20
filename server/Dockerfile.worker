@@ -17,4 +17,5 @@ COPY frontend/package.json frontend/package.json
 RUN npm install --omit=dev --workspace=@platform/server
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/node_modules/.prisma node_modules/.prisma
+EXPOSE 9101
 CMD ["node", "server/dist/worker/index.js"]

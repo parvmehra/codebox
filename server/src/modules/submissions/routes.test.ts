@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.doMock('../../database/prisma.js', () => ({
   prisma: {
+    $queryRaw: vi.fn(),
     problem: { findFirst: vi.fn() },
     submission: {
       create: vi.fn(),
@@ -24,6 +25,7 @@ vi.doMock('../../queue/submissions.js', () => ({
 
 process.env.DATABASE_URL ??= 'postgresql://test:test@localhost:5432/test';
 process.env.JWT_SECRET ??= 'test-secret-for-submission-api-tests-only-32';
+process.env.LOG_LEVEL ??= 'silent';
 
 const { env } = await import('../../config/env.js');
 const { prisma } = await import('../../database/prisma.js');
@@ -57,6 +59,26 @@ function authHeaders(role = 'USER'): HeadersInit {
 }
 
 describe('submission API', () => {
+  it('exposes liveness, dependency readiness, and Prometheus metrics', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+
+    const liveness = await fetch(`${baseUrl}/health/live`);
+    expect(liveness.status).toBe(200);
+    expect(await liveness.json()).toEqual({ status: 'live' });
+
+    const readiness = await fetch(`${baseUrl}/health/ready`);
+    expect(readiness.status).toBe(503);
+    expect(await readiness.json()).toEqual({
+      status: 'not_ready',
+      checks: { database: true, scheduler: false },
+    });
+
+    const metrics = await fetch(`${baseUrl}/metrics`);
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get('content-type')).toContain('text/plain');
+    expect(await metrics.text()).toContain('# HELP codebox_http_requests_total');
+  });
+
   it('saves and queues a submission for a published problem', async () => {
     vi.mocked(prisma.problem.findFirst).mockResolvedValue({ id: problemId } as never);
     vi.mocked(prisma.submission.create).mockResolvedValue({

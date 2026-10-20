@@ -3,6 +3,12 @@ import amqp, { type ChannelModel, type ConfirmChannel, type ConsumeMessage } fro
 import { z } from 'zod';
 import { runtimeEnv } from '../config/runtime-env.js';
 import { prisma } from '../database/prisma.js';
+import { logger } from '../observability/logger.js';
+import {
+  schedulerAssignmentsTotal,
+  schedulerQueueDepth,
+  schedulerReady,
+} from '../observability/metrics.js';
 import { HEARTBEAT_TTL_MS } from '../realtime/worker-status.js';
 import { publishDeadLetter } from './delivery.js';
 import {
@@ -21,11 +27,17 @@ import {
 } from './topology.js';
 
 const schedulerJob = z.object({ submissionId: z.string().uuid() });
+const log = logger.child({ component: 'scheduler' });
 
 let connection: ChannelModel | undefined;
 let channel: ConfirmChannel | undefined;
 let consumerTags: string[] = [];
+let schedulerIsReady = false;
 const activeDeliveries = new Set<Promise<void>>();
+
+export function isSubmissionSchedulerReady(): boolean {
+  return schedulerIsReady;
+}
 
 export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
   connection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
@@ -38,7 +50,7 @@ export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
       channel!.consume(queue, (message) => {
         if (!message || !channel) return;
         const delivery = handleDelivery(channel, message).catch((error: unknown) => {
-          console.error(
+          log.error(
             { error, messageId: message.properties.messageId },
             'Scheduler delivery failed',
           );
@@ -55,13 +67,18 @@ export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
   );
   consumerTags = consumers.map(({ consumerTag }) => consumerTag);
 
-  connection.on('error', (error: Error) =>
-    console.error({ error }, 'Scheduler RabbitMQ connection error'),
-  );
-  channel.on('error', (error: Error) =>
-    console.error({ error }, 'Scheduler RabbitMQ channel error'),
-  );
-  console.info(
+  connection.on('error', (error: Error) => {
+    setSchedulerReady(false);
+    log.error({ error }, 'Scheduler RabbitMQ connection error');
+  });
+  connection.on('close', () => setSchedulerReady(false));
+  channel.on('error', (error: Error) => {
+    setSchedulerReady(false);
+    log.error({ error }, 'Scheduler RabbitMQ channel error');
+  });
+  channel.on('close', () => setSchedulerReady(false));
+  setSchedulerReady(true);
+  log.info(
     { queues: [SUBMISSION_INGRESS_QUEUE, SUBMISSION_QUEUE] },
     'Submission scheduler is ready',
   );
@@ -70,6 +87,7 @@ export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
 }
 
 export async function stopSubmissionScheduler(): Promise<void> {
+  setSchedulerReady(false);
   const currentChannel = channel;
   if (!currentChannel) return;
 
@@ -83,6 +101,11 @@ export async function stopSubmissionScheduler(): Promise<void> {
   const currentConnection = connection;
   connection = undefined;
   await currentConnection?.close().catch(() => undefined);
+}
+
+function setSchedulerReady(ready: boolean): void {
+  schedulerIsReady = ready;
+  schedulerReady.set(Number(ready));
 }
 
 async function handleDelivery(
@@ -147,6 +170,11 @@ async function handleDelivery(
       priority: resolveMessagePriority(submission.priority, runtimeEnv.SCHEDULER_STRATEGY),
       headers: { ...message.properties.headers, 'x-scheduler-waiting': true },
     });
+    schedulerAssignmentsTotal.inc({
+      language: submission.language,
+      strategy: runtimeEnv.SCHEDULER_STRATEGY,
+      destination: 'wait',
+    });
     schedulerChannel.ack(message);
     return;
   }
@@ -154,8 +182,17 @@ async function handleDelivery(
   await publishConfirmed(schedulerChannel, assignment.queueName, message, {
     priority: resolveMessagePriority(submission.priority, runtimeEnv.SCHEDULER_STRATEGY),
   });
+  schedulerAssignmentsTotal.inc({
+    language: submission.language,
+    strategy: runtimeEnv.SCHEDULER_STRATEGY,
+    destination: 'worker',
+  });
+  schedulerQueueDepth.observe(
+    { language: submission.language, strategy: runtimeEnv.SCHEDULER_STRATEGY },
+    assignment.queuedJobs,
+  );
   schedulerChannel.ack(message);
-  console.info(
+  log.info(
     {
       submissionId: parsed.data.submissionId,
       language: submission.language,

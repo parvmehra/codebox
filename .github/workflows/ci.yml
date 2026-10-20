@@ -34,14 +34,17 @@ jobs:
         run: docker compose build api worker frontend
 
       - name: Start worker integration stack
-        run: docker compose up -d postgres rabbitmq api worker
+        run: docker compose up -d postgres rabbitmq api worker prometheus grafana
 
       - name: Verify the multi-language worker flow
         run: node scripts/worker-e2e.mjs
 
+      - name: Verify metrics scraping and Grafana
+        run: node scripts/observability-e2e.mjs
+
       - name: Show integration service logs after failure
         if: failure()
-        run: docker compose logs --no-color api postgres rabbitmq worker
+        run: docker compose logs --no-color api postgres rabbitmq worker prometheus grafana
 
       - name: Stop integration stack
         if: always()

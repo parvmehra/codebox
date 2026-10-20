@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { io } from 'socket.io-client';
 
 const apiBase = process.env.API_BASE_URL ?? 'http://127.0.0.1:4000/api';
-const healthUrl = new URL('/health', apiBase).toString();
+const healthUrl = new URL('/health/ready', apiBase).toString();
 const terminalStatuses = new Set([
   'ACCEPTED',
   'WRONG_ANSWER',
@@ -301,6 +301,13 @@ try {
   const { data: workerStatus } = await request('/workers/status');
   assert.equal(workerStatus.status, 'online');
   assert.ok(workerStatus.workerCount >= 1);
+
+  const metricsResponse = await fetch(new URL('/metrics', apiBase));
+  assert.equal(metricsResponse.ok, true, 'The API should expose Prometheus metrics.');
+  const metrics = await metricsResponse.text();
+  assert.match(metrics, /codebox_http_requests_total/);
+  assert.match(metrics, /codebox_submission_enqueues_total\{language="JAVA"\}/);
+  assert.match(metrics, /codebox_scheduler_assignments_total/);
 } finally {
   socket.disconnect();
   otherSocket.disconnect();

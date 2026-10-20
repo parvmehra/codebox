@@ -51,6 +51,8 @@ Before starting, set a safe `JWT_SECRET` in `.env`. Compose waits for healthy Po
 
 The scheduler defaults to FIFO. Set `SCHEDULER_STRATEGY=PRIORITY` to honor admin-set priorities from 0 to 10. Set `WORKER_LANGUAGES` to a comma-separated supported language list when running a specialized worker; it defaults to all four languages.
 
+The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana provisions the Codebox Operations dashboard and uses `GRAFANA_USER` / `GRAFANA_PASSWORD`; change the development defaults before sharing the host. The API exposes `/health/live`, `/health/ready`, and `/metrics`; the worker exposes equivalent health routes and metrics on its internal port 9101.
+
 ## Continuous integration
 
 GitHub Actions runs linting, TypeScript checks, server tests, application builds, Docker image builds, and a Docker-backed end-to-end submission for each supported language on pushes to `main` and pull requests.
@@ -91,7 +93,7 @@ The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit
 
 ## Security note
 
-Passwords are hashed with bcrypt and protected endpoints require JWTs. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. The retry limit is three total execution attempts; dead-letter messages currently require operator inspection and have no replay UI. Redis, metrics, and contests are not implemented yet.
+Passwords are hashed with bcrypt and protected endpoints require JWTs. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. The retry limit is three total execution attempts; dead-letter messages currently require operator inspection and have no replay UI. Metrics endpoints should stay on a trusted network; Redis and contests are not implemented yet.
 
 ## Learning notes
 
@@ -102,7 +104,8 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Each lang
 - [Sandbox security](docs/sandbox-security.md)
 - [Failure handling](docs/failure-handling.md)
 - [Database design](docs/database.md)
+- [Observability](docs/observability.md)
 
 ## Next phase
 
-Phase 5 reliability is implemented: bounded retries, a durable dead-letter queue, lease-based idempotency and stale-job recovery, persisted worker heartbeats, cancellation, and bounded graceful shutdown. Phase 6 adds FIFO or priority scheduling, capability matching, and queue-depth-aware worker-group assignment. Phase 7 will add operational metrics and dashboards.
+Phases 5–7 are implemented: bounded retries, dead-letter handling, lease-based recovery, cancellation, FIFO/priority capability-aware scheduling, structured logs, Prometheus metrics, Grafana dashboards, and readiness endpoints. Phase 8 will add immutable execution metadata, test-case versioning, and re-running submissions while preserving original results.

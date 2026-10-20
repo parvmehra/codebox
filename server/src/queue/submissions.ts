@@ -1,6 +1,7 @@
 import amqp from 'amqplib';
 import type { ChannelModel, ConfirmChannel } from 'amqplib';
 import { runtimeEnv } from '../config/runtime-env.js';
+import { logger } from '../observability/logger.js';
 import {
   realtimeRoutingKey,
   SUBMISSION_EVENTS_EXCHANGE,
@@ -16,6 +17,7 @@ import { resolveMessagePriority } from './scheduler.js';
 
 export { SUBMISSION_INGRESS_QUEUE, SUBMISSION_QUEUE } from './topology.js';
 
+const log = logger.child({ component: 'submission-publisher' });
 let connection: ChannelModel | undefined;
 let channel: ConfirmChannel | undefined;
 let channelPromise: Promise<ConfirmChannel> | undefined;
@@ -29,7 +31,7 @@ async function createChannel(): Promise<ConfirmChannel> {
     await nextChannel.assertExchange(SUBMISSION_EVENTS_EXCHANGE, 'topic', { durable: false });
 
     nextConnection.on('error', (error: Error) => {
-      console.error({ error }, 'RabbitMQ connection error');
+      log.error({ error }, 'RabbitMQ connection error');
     });
     nextConnection.on('close', () => {
       if (connection !== nextConnection) return;
@@ -46,7 +48,7 @@ async function createChannel(): Promise<ConfirmChannel> {
       void staleConnection?.close().catch(() => undefined);
     });
     nextChannel.on('error', (error: Error) => {
-      console.error({ error }, 'RabbitMQ publisher channel error');
+      log.error({ error }, 'RabbitMQ publisher channel error');
     });
 
     connection = nextConnection;

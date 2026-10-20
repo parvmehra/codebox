@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { SubmissionStatus } from '@prisma/client';
 import { prisma } from '../database/prisma.js';
+import { logger } from '../observability/logger.js';
 import { SUBMISSION_LEASE_MS, MAX_EXECUTION_ATTEMPTS } from '../queue/reliability.js';
 import {
   assertSubmissionTransition,
@@ -14,6 +15,8 @@ import {
   SourceSizeLimitError,
 } from './docker-executor.js';
 import { getLanguageProfile, UnsupportedLanguageError } from './language-profile.js';
+
+const log = logger.child({ component: 'submission-processor' });
 
 class SubmissionStateChangedError extends Error {
   constructor(
@@ -400,7 +403,7 @@ function publishSafely(publishEvent: RealtimePublisher, event: SubmissionRealtim
   try {
     publishEvent(event);
   } catch (error) {
-    console.warn({ error, submissionId: event.submissionId }, 'Could not publish submission event');
+    log.warn({ error, submissionId: event.submissionId }, 'Could not publish submission event');
   }
 }
 
