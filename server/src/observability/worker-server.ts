@@ -7,6 +7,9 @@ let server: Server | undefined;
 let ready = false;
 
 export function setWorkerReady(isReady: boolean): void {
+  if (ready !== isReady) {
+    logger.info({ ready: isReady }, 'Worker readiness changed');
+  }
   ready = isReady;
   workerReady.set(Number(isReady));
 }

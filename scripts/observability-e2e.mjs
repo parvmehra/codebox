@@ -4,7 +4,7 @@ const prometheusBase = process.env.PROMETHEUS_BASE_URL ?? 'http://127.0.0.1:9090
 const grafanaBase = process.env.GRAFANA_BASE_URL ?? 'http://127.0.0.1:3000';
 const timeoutMs = 90_000;
 
-async function waitFor(check, label) {
+async function waitFor(check, label, describeFailure) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
@@ -15,7 +15,10 @@ async function waitFor(check, label) {
     }
     await delay(1_000);
   }
-  throw new Error(`${label} did not become ready within ${timeoutMs} ms.`, { cause: lastError });
+  const details = describeFailure ? ` ${describeFailure()}` : '';
+  throw new Error(`${label} did not become ready within ${timeoutMs} ms.${details}`, {
+    cause: lastError,
+  });
 }
 
 async function queryPrometheus(query) {
@@ -45,9 +48,14 @@ await waitFor(async () => {
   return body.database === 'ok';
 }, 'Grafana');
 
-await waitFor(async () => {
-  const workerReadiness = await queryPrometheus('codebox_worker_ready');
-  return Number(workerReadiness?.[0]?.value?.[1]) === 1;
-}, 'Prometheus worker readiness metric');
+let lastWorkerReadiness;
+await waitFor(
+  async () => {
+    lastWorkerReadiness = await queryPrometheus('codebox_worker_ready');
+    return Number(lastWorkerReadiness?.[0]?.value?.[1]) === 1;
+  },
+  'Prometheus worker readiness metric',
+  () => `Last sample: ${JSON.stringify(lastWorkerReadiness)}`,
+);
 
 console.info('Prometheus is scraping the API and worker; Grafana is ready.');
