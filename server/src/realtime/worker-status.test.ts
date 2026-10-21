@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe('persisted worker status', () => {
-  it('persists heartbeat history and prunes records beyond the retention window', async () => {
+  it('persists heartbeat history without running retention cleanup per heartbeat', async () => {
     const receivedAt = new Date('2026-10-16T10:00:00.000Z');
     await persistWorkerHeartbeat(workerId, WorkerStatus.ONLINE, 1, receivedAt, []);
 
@@ -66,12 +66,8 @@ describe('persisted worker status', () => {
         recordedAt: receivedAt,
       },
     });
-    expect(mocks.heartbeatDeleteMany).toHaveBeenCalledWith({
-      where: { recordedAt: { lt: new Date('2026-10-09T10:00:00.000Z') } },
-    });
-    expect(mocks.workerDeleteMany).toHaveBeenCalledWith({
-      where: { lastHeartbeatAt: { lt: new Date('2026-10-09T10:00:00.000Z') } },
-    });
+    expect(mocks.heartbeatDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.workerDeleteMany).not.toHaveBeenCalled();
   });
 
   it('reports only fresh online workers and uses persisted heartbeat time', async () => {

@@ -15,7 +15,7 @@
 
 The worker owns a 60-second lease while processing a submission and renews it in its persisted heartbeat. The API checks expired leases every 15 seconds. It closes an incomplete execution record, then either queues a new attempt or marks the submission `SYSTEM_ERROR` after the three-attempt budget is used. Recovered jobs are republished through a database-backed dispatch flag so a broker outage does not lose the recovery request.
 
-Worker snapshots and heartbeat history are stored in PostgreSQL. The status endpoint counts a worker as online only when its last heartbeat is no more than 45 seconds old. Heartbeat history is retained for seven days.
+Worker snapshots and heartbeat history are stored in PostgreSQL. The status endpoint counts a worker as online only when its last heartbeat is no more than 45 seconds old. The API prunes heartbeat history and inactive worker snapshots hourly, retaining seven days. A cleanup failure is logged and retried on the next hourly run; heartbeat writes continue independently.
 
 `/health/live` reports process liveness without checking dependencies. `/health/ready` checks PostgreSQL and active scheduler consumers before the API accepts traffic; the worker's readiness endpoint stays unavailable until it is consuming and can persist heartbeats. Prometheus scrapes each process independently, so target health remains visible when an application readiness check fails.
 
@@ -28,7 +28,7 @@ On worker shutdown, the consumer stops accepting new work and waits up to 18 sec
 ## Remaining limitations
 
 - The dead-letter queue is durable and inspectable, but there is no admin UI or automated replay workflow yet.
-- Heartbeat history is operational data, not an audit guarantee. A database outage can interrupt its retention cleanup and heartbeat writes.
+- Heartbeat history is operational data, not an audit guarantee. A database outage can interrupt heartbeat writes and delay retention cleanup until a later cleanup run succeeds.
 - Docker provides useful educational isolation, not a guarantee against every hostile-code escape. See [sandbox security](sandbox-security.md).
 - Socket.IO updates remain transient; PostgreSQL-backed REST reads and polling are the recovery path for missed events.
 - FIFO is the default scheduler strategy. Priority ordering uses RabbitMQ's bounded priority queue and can reorder queued work, but it does not preempt a job already running.

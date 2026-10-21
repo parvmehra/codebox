@@ -2,7 +2,6 @@ import { WorkerStatus } from '@prisma/client';
 import { prisma } from '../database/prisma.js';
 
 export const HEARTBEAT_TTL_MS = 45_000;
-const HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export async function persistWorkerHeartbeat(
   workerId: string,
@@ -20,9 +19,6 @@ export async function persistWorkerHeartbeat(
   await prisma.workerHeartbeat.create({
     data: { workerId, status, activeJobs, capabilities, recordedAt: receivedAt },
   });
-  const historyCutoff = new Date(receivedAt.getTime() - HISTORY_RETENTION_MS);
-  await prisma.workerHeartbeat.deleteMany({ where: { recordedAt: { lt: historyCutoff } } });
-  await prisma.worker.deleteMany({ where: { lastHeartbeatAt: { lt: historyCutoff } } });
 }
 
 export async function getWorkerStatus(now = new Date()) {

@@ -49,6 +49,8 @@ docker compose up --build
 
 Before starting, set a safe `JWT_SECRET` in `.env`. Compose waits for healthy Postgres and RabbitMQ services; the API applies checked-in migrations and seeds the sample problem at startup. The worker needs access to `/var/run/docker.sock` so it can create isolated execution containers. The submitted-code containers do not receive the socket.
 
+For deployment configuration, reverse-proxy routing, persistent data, and operational limits, see [Deployment](docs/deployment.md). The frontend's API URL is set at build time with `VITE_API_URL`; set `CLIENT_ORIGIN` to the browser's origin and configure `TRUST_PROXY_HOPS` when using a trusted reverse proxy.
+
 The scheduler defaults to FIFO. Set `SCHEDULER_STRATEGY=PRIORITY` to honor admin-set priorities from 0 to 10. Set `WORKER_LANGUAGES` to a comma-separated supported language list when running a specialized worker; it defaults to all four languages.
 
 The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana provisions the Codebox Operations dashboard and uses `GRAFANA_USER` / `GRAFANA_PASSWORD`; change the development defaults before sharing the host. The API exposes `/health/live`, `/health/ready`, and `/metrics`; the worker exposes equivalent health routes and metrics on its internal port 9101.
@@ -113,7 +115,8 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Registrat
 - [Contests and standings](docs/contests.md)
 - [Request rate limits](docs/rate-limiting.md)
 - [Input validation](docs/input-validation.md)
+- [Deployment](docs/deployment.md)
 
 ## Next phase
 
-Phases 5–9 are implemented: bounded retries, lease-based recovery, scheduling, observability, immutable execution provenance, test-case revisions, re-runs, and basic timed contests with score-derived standings. Phase 10 is in progress: request rate limits and bounded input validation are implemented; cleanup jobs, CI/CD improvements, and deployment documentation remain. No deployment or paid service is authorized without explicit approval.
+Phases 5–10 are implemented: bounded retries, lease-based recovery, scheduling, observability, immutable execution provenance, test-case revisions, re-runs, timed contests, rate limits, bounded input validation, hourly worker-history cleanup, pinned CI runners, and deployment guidance. The Compose configuration remains a single-host evaluation baseline. No deployment or paid service is authorized without explicit approval.
