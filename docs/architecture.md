@@ -20,7 +20,7 @@ Prometheus ──scrapes──► API and worker metrics ◄── Grafana dashb
 ## Responsibilities
 
 - **Frontend:** problem and contest pages, authentication, Monaco editor, submission history, live status and test verdicts, contest standings, and a worker status page. REST polling remains as a reconnect fallback.
-- **API:** authentication, problem and contest access, submission validation, persistence, a small RabbitMQ scheduler, event consumption, and authenticated Socket.IO rooms. It never executes submitted code.
+- **API:** authentication, per-IP request limits, problem and contest access, submission validation, persistence, a small RabbitMQ scheduler, event consumption, and authenticated Socket.IO rooms. It never executes submitted code.
 - **PostgreSQL:** source of truth for users, problems, test cases, contests, contest membership, submissions, executions, per-test results, worker snapshots, and heartbeat history.
 - **RabbitMQ:** durable scheduler ingress, durable priority queues for matching worker capability groups, delayed bounded retries, a scheduler wait queue, a dead-letter queue, and a non-durable exchange for lifecycle and worker-control events.
 - **Scheduler:** matches a submission language to live worker capability groups and selects the group with the lowest queued-plus-active load. The configured strategy uses FIFO by default or RabbitMQ priorities when enabled.

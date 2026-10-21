@@ -43,6 +43,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PORT: 4000
       CLIENT_ORIGIN: http://localhost:5173
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
     ports:
       - '4000:4000'
     healthcheck:

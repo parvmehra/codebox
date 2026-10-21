@@ -16,6 +16,7 @@ import { apiReady, metricsRegistry, schedulerReady } from './observability/metri
 import { isSubmissionSchedulerReady } from './queue/scheduler-service.js';
 
 export const app = express();
+app.set('trust proxy', env.TRUST_PROXY_HOPS);
 app.use(cors({ origin: env.CLIENT_ORIGIN }));
 app.use(
   pinoHttp({

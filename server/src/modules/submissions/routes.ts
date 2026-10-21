@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/auth.js';
+import { submissionRateLimiter } from '../../middleware/rate-limit.js';
 import { logger } from '../../observability/logger.js';
 import {
   submissionEnqueueFailuresTotal,
@@ -45,120 +46,125 @@ const cancellableStatuses = [
 export const submissionsRouter = Router();
 const log = logger.child({ component: 'submissions-api' });
 
-submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, response) => {
-  const input = createSubmissionInput.parse(request.body);
-  if (input.priority > 0 && request.user!.role !== Role.ADMIN) {
-    throw new HttpError(403, 'INSUFFICIENT_ROLE', 'Only admins can set submission priority.');
-  }
-  const problem = await prisma.problem.findFirst({
-    where: { id: input.problemId, isPublished: true },
-    select: { id: true },
-  });
-
-  if (!problem) throw new HttpError(404, 'PROBLEM_NOT_FOUND', 'Published problem not found.');
-
-  if (input.contestId) {
-    const contest = await prisma.contest.findFirst({
-      where: { id: input.contestId, isPublished: true },
-      select: { id: true, startAt: true, endAt: true },
+submissionsRouter.post(
+  '/',
+  submissionRateLimiter,
+  requireAuth,
+  async (request: AuthenticatedRequest, response) => {
+    const input = createSubmissionInput.parse(request.body);
+    if (input.priority > 0 && request.user!.role !== Role.ADMIN) {
+      throw new HttpError(403, 'INSUFFICIENT_ROLE', 'Only admins can set submission priority.');
+    }
+    const problem = await prisma.problem.findFirst({
+      where: { id: input.problemId, isPublished: true },
+      select: { id: true },
     });
-    if (!contest) throw new HttpError(404, 'CONTEST_NOT_FOUND', 'Contest not found.');
-    const now = Date.now();
-    if (now < contest.startAt.getTime() || now >= contest.endAt.getTime()) {
-      throw new HttpError(
-        409,
-        'CONTEST_NOT_ACTIVE',
-        'Contest submissions are only accepted while it is live.',
-      );
+
+    if (!problem) throw new HttpError(404, 'PROBLEM_NOT_FOUND', 'Published problem not found.');
+
+    if (input.contestId) {
+      const contest = await prisma.contest.findFirst({
+        where: { id: input.contestId, isPublished: true },
+        select: { id: true, startAt: true, endAt: true },
+      });
+      if (!contest) throw new HttpError(404, 'CONTEST_NOT_FOUND', 'Contest not found.');
+      const now = Date.now();
+      if (now < contest.startAt.getTime() || now >= contest.endAt.getTime()) {
+        throw new HttpError(
+          409,
+          'CONTEST_NOT_ACTIVE',
+          'Contest submissions are only accepted while it is live.',
+        );
+      }
+
+      const participant = await prisma.contestParticipant.findUnique({
+        where: { contestId_userId: { contestId: contest.id, userId: request.user!.id } },
+        select: { userId: true },
+      });
+      if (!participant) {
+        throw new HttpError(403, 'CONTEST_NOT_JOINED', 'Join the contest before submitting to it.');
+      }
+
+      const contestProblem = await prisma.contestProblem.findUnique({
+        where: { contestId_problemId: { contestId: contest.id, problemId: problem.id } },
+        select: { problemId: true },
+      });
+      if (!contestProblem) {
+        throw new HttpError(
+          400,
+          'PROBLEM_NOT_IN_CONTEST',
+          'This problem is not part of the contest.',
+        );
+      }
     }
 
-    const participant = await prisma.contestParticipant.findUnique({
-      where: { contestId_userId: { contestId: contest.id, userId: request.user!.id } },
-      select: { userId: true },
-    });
-    if (!participant) {
-      throw new HttpError(403, 'CONTEST_NOT_JOINED', 'Join the contest before submitting to it.');
-    }
-
-    const contestProblem = await prisma.contestProblem.findUnique({
-      where: { contestId_problemId: { contestId: contest.id, problemId: problem.id } },
-      select: { problemId: true },
-    });
-    if (!contestProblem) {
-      throw new HttpError(
-        400,
-        'PROBLEM_NOT_IN_CONTEST',
-        'This problem is not part of the contest.',
-      );
-    }
-  }
-
-  const submission = await prisma.submission.create({
-    data: {
-      userId: request.user!.id,
-      problemId: problem.id,
-      ...(input.contestId ? { contestId: input.contestId } : {}),
-      language: input.language,
-      sourceCode: input.sourceCode,
-      priority: input.priority,
-    },
-    select: { id: true, status: true, language: true, priority: true, createdAt: true },
-  });
-
-  try {
-    await publishSubmissionEvent({
-      type: 'submission:queued',
-      submissionId: submission.id,
-      userId: request.user!.id,
-      status: SubmissionStatus.QUEUED,
-      updatedAt: submission.createdAt.toISOString(),
-    });
-  } catch (error) {
-    log.warn({ error, submissionId: submission.id }, 'Could not publish queued status event');
-  }
-
-  try {
-    await publishSubmission(submission.id, submission.priority);
-    submissionEnqueuesTotal.inc({ language: submission.language });
-  } catch (error) {
-    submissionEnqueueFailuresTotal.inc({ language: submission.language });
-    log.error({ error, submissionId: submission.id }, 'Could not publish submission job');
-    assertSubmissionTransition(SubmissionStatus.QUEUED, SubmissionStatus.SYSTEM_ERROR);
-    await prisma.submission.updateMany({
-      where: { id: submission.id, status: SubmissionStatus.QUEUED },
+    const submission = await prisma.submission.create({
       data: {
-        status: SubmissionStatus.SYSTEM_ERROR,
-        errorMessage: 'The submission could not be queued.',
+        userId: request.user!.id,
+        problemId: problem.id,
+        ...(input.contestId ? { contestId: input.contestId } : {}),
+        language: input.language,
+        sourceCode: input.sourceCode,
+        priority: input.priority,
       },
+      select: { id: true, status: true, language: true, priority: true, createdAt: true },
     });
+
     try {
       await publishSubmissionEvent({
-        type: 'submission:failed',
+        type: 'submission:queued',
         submissionId: submission.id,
         userId: request.user!.id,
-        status: SubmissionStatus.SYSTEM_ERROR,
-        updatedAt: new Date().toISOString(),
-        errorMessage: 'The submission could not be queued.',
+        status: SubmissionStatus.QUEUED,
+        updatedAt: submission.createdAt.toISOString(),
       });
-    } catch (eventError) {
-      log.warn(
-        { error: eventError, submissionId: submission.id },
-        'Could not publish failure event',
-      );
+    } catch (error) {
+      log.warn({ error, submissionId: submission.id }, 'Could not publish queued status event');
     }
 
-    return response.status(503).json({
-      error: {
-        code: 'QUEUE_UNAVAILABLE',
-        message:
-          'The submission was saved but could not be queued. Check its status before retrying.',
-      },
-      submissionId: submission.id,
-    });
-  }
+    try {
+      await publishSubmission(submission.id, submission.priority);
+      submissionEnqueuesTotal.inc({ language: submission.language });
+    } catch (error) {
+      submissionEnqueueFailuresTotal.inc({ language: submission.language });
+      log.error({ error, submissionId: submission.id }, 'Could not publish submission job');
+      assertSubmissionTransition(SubmissionStatus.QUEUED, SubmissionStatus.SYSTEM_ERROR);
+      await prisma.submission.updateMany({
+        where: { id: submission.id, status: SubmissionStatus.QUEUED },
+        data: {
+          status: SubmissionStatus.SYSTEM_ERROR,
+          errorMessage: 'The submission could not be queued.',
+        },
+      });
+      try {
+        await publishSubmissionEvent({
+          type: 'submission:failed',
+          submissionId: submission.id,
+          userId: request.user!.id,
+          status: SubmissionStatus.SYSTEM_ERROR,
+          updatedAt: new Date().toISOString(),
+          errorMessage: 'The submission could not be queued.',
+        });
+      } catch (eventError) {
+        log.warn(
+          { error: eventError, submissionId: submission.id },
+          'Could not publish failure event',
+        );
+      }
 
-  return response.status(202).json({ data: submission });
-});
+      return response.status(503).json({
+        error: {
+          code: 'QUEUE_UNAVAILABLE',
+          message:
+            'The submission was saved but could not be queued. Check its status before retrying.',
+        },
+        submissionId: submission.id,
+      });
+    }
+
+    return response.status(202).json({ data: submission });
+  },
+);
 
 submissionsRouter.get('/', requireAuth, async (request: AuthenticatedRequest, response) => {
   const { cursor, limit } = historyQuery.parse(request.query);
@@ -256,6 +262,7 @@ submissionsRouter.post(
 
 submissionsRouter.post(
   '/:id/rerun',
+  submissionRateLimiter,
   requireAuth,
   async (request: AuthenticatedRequest, response) => {
     const id = z.string().uuid().parse(request.params.id);
