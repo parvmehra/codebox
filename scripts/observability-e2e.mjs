@@ -51,7 +51,7 @@ await waitFor(async () => {
 let lastWorkerReadiness;
 await waitFor(
   async () => {
-    lastWorkerReadiness = await queryPrometheus('codebox_worker_ready');
+    lastWorkerReadiness = await queryPrometheus('codebox_worker_ready{job="worker"}');
     return Number(lastWorkerReadiness?.[0]?.value?.[1]) === 1;
   },
   'Prometheus worker readiness metric',
