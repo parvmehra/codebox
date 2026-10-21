@@ -1,17 +1,12 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/auth.js';
 import { loginRateLimiter, registrationRateLimiter } from '../../middleware/rate-limit.js';
 import { HttpError } from '../../utils/http-error.js';
-
-const credentials = z.object({
-  email: z.string().email().max(255),
-  password: z.string().min(8).max(72),
-});
+import { credentials } from './validation.js';
 const publicUser = (user: { id: string; email: string; role: string }) => ({
   id: user.id,
   email: user.email,

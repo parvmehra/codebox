@@ -4,33 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { HttpError } from '../../utils/http-error.js';
-
-const createProblem = z.object({
-  slug: z
-    .string()
-    .regex(/^[a-z0-9-]+$/)
-    .max(120),
-  title: z.string().min(3).max(200),
-  description: z.string().min(1),
-  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
-  constraints: z.string().min(1),
-  inputFormat: z.string().min(1),
-  outputFormat: z.string().min(1),
-  examples: z
-    .array(z.object({ input: z.string(), output: z.string(), explanation: z.string().optional() }))
-    .max(10),
-  isPublished: z.boolean().default(false),
-});
-
-const testCaseInput = z.object({
-  input: z.string().max(100_000),
-  expectedOut: z.string().max(100_000),
-  isHidden: z.boolean().default(true),
-});
-
-const updateTestCaseInput = testCaseInput.extend({
-  expectedVersion: z.number().int().positive(),
-});
+import { createProblemInput, testCaseInput, updateTestCaseInput } from './validation.js';
 
 export const problemsRouter = Router();
 
@@ -66,7 +40,7 @@ problemsRouter.get('/:id', async (request, response) => {
 });
 
 problemsRouter.post('/', requireAuth, requireRole(Role.ADMIN), async (request, response) => {
-  const input = createProblem.parse(request.body);
+  const input = createProblemInput.parse(request.body);
   const problem = await prisma.problem.create({ data: input });
   return response.status(201).json({ data: problem });
 });
