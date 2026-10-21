@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { api, type Problem, type QueuedSubmission, type SubmissionLanguage } from '../services/api';
 
@@ -51,6 +51,8 @@ type SubmissionApiError = { error?: { message?: string }; submissionId?: string 
 
 export function ProblemDetailsPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const contestId = searchParams.get('contestId');
   const navigate = useNavigate();
   const [language, setLanguage] = useState<SubmissionLanguage>('JAVA');
   const [sourceByLanguage, setSourceByLanguage] = useState(starterCode);
@@ -65,6 +67,7 @@ export function ProblemDetailsPage() {
       (
         await api.post<{ data: QueuedSubmission }>('/submissions', {
           problemId: id,
+          ...(contestId ? { contestId } : {}),
           language,
           sourceCode,
         })
@@ -92,6 +95,14 @@ export function ProblemDetailsPage() {
       <Link className="text-link" to="/problems">
         ← All problems
       </Link>
+      {contestId && (
+        <p className="contest-submission-banner">
+          This solution will be recorded for the contest.{' '}
+          <Link className="text-link" to={`/contests/${contestId}`}>
+            Return to contest
+          </Link>
+        </p>
+      )}
       <div className="detail-title">
         <div>
           <span className={`badge ${data.difficulty.toLowerCase()}`}>{data.difficulty}</span>
@@ -179,7 +190,11 @@ export function ProblemDetailsPage() {
               <div className="editor-footer">
                 <span>Up to 100 KB of source code</span>
                 <button className="button" disabled={submit.isPending || !sourceCode.trim()}>
-                  {submit.isPending ? 'Sending…' : 'Submit solution'}
+                  {submit.isPending
+                    ? 'Sending…'
+                    : contestId
+                      ? 'Submit for contest'
+                      : 'Submit solution'}
                 </button>
               </div>
             </form>

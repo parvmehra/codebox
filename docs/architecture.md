@@ -19,9 +19,9 @@ Prometheus ──scrapes──► API and worker metrics ◄── Grafana dashb
 
 ## Responsibilities
 
-- **Frontend:** problem pages, authentication, Monaco editor, submission history, live status and test verdicts, and a worker status page. REST polling remains as a reconnect fallback.
-- **API:** authentication, problem access, submission validation, persistence, a small RabbitMQ scheduler, event consumption, and authenticated Socket.IO rooms. It never executes submitted code.
-- **PostgreSQL:** source of truth for users, problems, test cases, submissions, executions, per-test results, worker snapshots, and heartbeat history.
+- **Frontend:** problem and contest pages, authentication, Monaco editor, submission history, live status and test verdicts, contest standings, and a worker status page. REST polling remains as a reconnect fallback.
+- **API:** authentication, problem and contest access, submission validation, persistence, a small RabbitMQ scheduler, event consumption, and authenticated Socket.IO rooms. It never executes submitted code.
+- **PostgreSQL:** source of truth for users, problems, test cases, contests, contest membership, submissions, executions, per-test results, worker snapshots, and heartbeat history.
 - **RabbitMQ:** durable scheduler ingress, durable priority queues for matching worker capability groups, delayed bounded retries, a scheduler wait queue, a dead-letter queue, and a non-durable exchange for lifecycle and worker-control events.
 - **Scheduler:** matches a submission language to live worker capability groups and selects the group with the lowest queued-plus-active load. The configured strategy uses FIFO by default or RabbitMQ priorities when enabled.
 - **Worker:** advertises its language capabilities, consumes only its matching group queue, claims a queued submission, selects a language profile, runs the program in Docker, persists the result, and emits progress events.
@@ -39,6 +39,7 @@ Prometheus ──scrapes──► API and worker metrics ◄── Grafana dashb
 7. The API's temporary event queue forwards submission events only to the authenticated owner's Socket.IO room. The final result is persisted before the worker acknowledges the job.
 8. The frontend refreshes submission data on Socket.IO events and uses REST polling if the socket is unavailable. Persisted worker heartbeats power the status page, and the API recovers submissions whose leases expire.
 9. Prometheus scrapes the API and worker metrics endpoints; Grafana queries Prometheus for request, scheduler, worker, and scrape health panels.
+10. An admin groups published problems into a contest. Participants join, submit through the same worker pipeline during the event window, and read standings derived from accepted contest submissions.
 
 ## Learning notes
 

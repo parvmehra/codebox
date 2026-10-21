@@ -18,6 +18,7 @@ import { HttpError } from '../../utils/http-error.js';
 
 const createSubmissionInput = z.object({
   problemId: z.string().uuid(),
+  contestId: z.string().uuid().optional(),
   language: z.nativeEnum(SubmissionLanguage),
   priority: z.number().int().min(0).max(10).default(0),
   sourceCode: z
@@ -56,10 +57,47 @@ submissionsRouter.post('/', requireAuth, async (request: AuthenticatedRequest, r
 
   if (!problem) throw new HttpError(404, 'PROBLEM_NOT_FOUND', 'Published problem not found.');
 
+  if (input.contestId) {
+    const contest = await prisma.contest.findFirst({
+      where: { id: input.contestId, isPublished: true },
+      select: { id: true, startAt: true, endAt: true },
+    });
+    if (!contest) throw new HttpError(404, 'CONTEST_NOT_FOUND', 'Contest not found.');
+    const now = Date.now();
+    if (now < contest.startAt.getTime() || now >= contest.endAt.getTime()) {
+      throw new HttpError(
+        409,
+        'CONTEST_NOT_ACTIVE',
+        'Contest submissions are only accepted while it is live.',
+      );
+    }
+
+    const participant = await prisma.contestParticipant.findUnique({
+      where: { contestId_userId: { contestId: contest.id, userId: request.user!.id } },
+      select: { userId: true },
+    });
+    if (!participant) {
+      throw new HttpError(403, 'CONTEST_NOT_JOINED', 'Join the contest before submitting to it.');
+    }
+
+    const contestProblem = await prisma.contestProblem.findUnique({
+      where: { contestId_problemId: { contestId: contest.id, problemId: problem.id } },
+      select: { problemId: true },
+    });
+    if (!contestProblem) {
+      throw new HttpError(
+        400,
+        'PROBLEM_NOT_IN_CONTEST',
+        'This problem is not part of the contest.',
+      );
+    }
+  }
+
   const submission = await prisma.submission.create({
     data: {
       userId: request.user!.id,
       problemId: problem.id,
+      ...(input.contestId ? { contestId: input.contestId } : {}),
       language: input.language,
       sourceCode: input.sourceCode,
       priority: input.priority,

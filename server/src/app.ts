@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import { prisma } from './database/prisma.js';
 import { errorHandler } from './middleware/errors.js';
 import { authRouter } from './modules/auth/routes.js';
+import { contestsRouter } from './modules/contests/routes.js';
 import { problemsRouter } from './modules/problems/routes.js';
 import { submissionsRouter } from './modules/submissions/routes.js';
 import { workersRouter } from './modules/workers/routes.js';
@@ -66,6 +67,7 @@ app.get('/metrics', async (_request, response, next) => {
   }
 });
 app.use('/api/auth', authRouter);
+app.use('/api/contests', contestsRouter);
 app.use('/api/problems', problemsRouter);
 app.use('/api/submissions', submissionsRouter);
 app.use('/api/workers', workersRouter);

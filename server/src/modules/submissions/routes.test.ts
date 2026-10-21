@@ -9,6 +9,9 @@ vi.doMock('../../database/prisma.js', () => ({
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
     problem: { findFirst: vi.fn(), findUnique: vi.fn() },
+    contest: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
+    contestParticipant: { findUnique: vi.fn(), create: vi.fn() },
+    contestProblem: { findUnique: vi.fn() },
     testCase: {
       findMany: vi.fn(),
       create: vi.fn(),
@@ -43,6 +46,7 @@ const { app } = await import('../../app.js');
 
 const userId = 'a25145ab-21aa-4d20-9e08-3a2b4d59110f';
 const problemId = '7ad05396-f608-44ea-8a31-5e4be967fab6';
+const contestId = '8ec1dc8b-cbb6-4956-9e5d-2b1b3e003bc9';
 const submissionId = 'c3070e38-c557-43d5-a59b-e8af46675370';
 const executionId = '48a6a0a4-828e-4ea0-a9ec-60509f663ca5';
 const rerunSubmissionId = '63806c75-00b8-4fa8-9e88-f81cd67c2a3b';
@@ -118,6 +122,58 @@ describe('submission API', () => {
       status: SubmissionStatus.QUEUED,
       updatedAt: '2026-10-13T00:00:00.000Z',
     });
+  });
+
+  it('stores contest submissions only for joined users while the contest is live', async () => {
+    vi.mocked(prisma.problem.findFirst).mockResolvedValue({ id: problemId } as never);
+    vi.mocked(prisma.contest.findFirst).mockResolvedValue({
+      id: contestId,
+      startAt: new Date(Date.now() - 60_000),
+      endAt: new Date(Date.now() + 60_000),
+    } as never);
+    vi.mocked(prisma.contestParticipant.findUnique).mockResolvedValue({ userId } as never);
+    vi.mocked(prisma.contestProblem.findUnique).mockResolvedValue({ problemId } as never);
+    vi.mocked(prisma.submission.create).mockResolvedValue({
+      id: submissionId,
+      status: SubmissionStatus.QUEUED,
+      language: 'JAVA',
+      priority: 0,
+      createdAt: new Date('2026-10-13T00:00:00.000Z'),
+    } as never);
+
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ problemId, contestId, language: 'JAVA', sourceCode: 'class Main {}' }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(prisma.contestParticipant.findUnique).toHaveBeenCalledWith({
+      where: { contestId_userId: { contestId, userId } },
+      select: { userId: true },
+    });
+    expect(prisma.submission.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contestId }) }),
+    );
+  });
+
+  it('rejects contest submissions before the contest starts', async () => {
+    vi.mocked(prisma.problem.findFirst).mockResolvedValue({ id: problemId } as never);
+    vi.mocked(prisma.contest.findFirst).mockResolvedValue({
+      id: contestId,
+      startAt: new Date(Date.now() + 60_000),
+      endAt: new Date(Date.now() + 120_000),
+    } as never);
+
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ problemId, contestId, language: 'JAVA', sourceCode: 'class Main {}' }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'CONTEST_NOT_ACTIVE' } });
+    expect(prisma.submission.create).not.toHaveBeenCalled();
   });
 
   it('marks the saved submission failed when the broker cannot confirm it', async () => {

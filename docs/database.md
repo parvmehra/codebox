@@ -13,6 +13,8 @@ PostgreSQL stores durable user, problem, test-case, submission, execution, and t
 - `WorkerHeartbeat` keeps timestamped status, capabilities, and active-job snapshots for seven days so worker health remains inspectable after an API restart.
 - `Submission` tracks execution attempts, the current worker and lease token, the lease expiry, and whether a recovered job still needs dispatch.
 - A re-run creates a new `Submission` linked to its source `Execution`. The original submission and its results are not reset or replaced.
+- `Contest` stores a timed event and its publication state. `ContestProblem` pins an ordered set of published problems and their point values. `ContestParticipant` records one membership per user and a public display name.
+- Contest submissions carry an optional `contestId`. The leaderboard derives scores from accepted submissions created within the contest window, so persisted execution results remain the source of truth.
 
 The submission API returns all execution metadata and the latest attempt's verdicts to the owning user. Test inputs and expected outputs remain private; execution snapshots reference immutable versions instead of returning their contents.
 

@@ -29,6 +29,34 @@ export type Problem = ProblemSummary & {
   examples: { input: string; output: string; explanation?: string }[];
 };
 
+export type ContestStatus = 'UPCOMING' | 'LIVE' | 'COMPLETED';
+
+export type ContestSummary = {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  startAt: string;
+  endAt: string;
+  status: ContestStatus;
+  participantCount: number;
+  problemCount: number;
+};
+
+export type ContestDetails = Omit<ContestSummary, 'problemCount'> & {
+  isParticipant: boolean;
+  displayName: string | null;
+  problems: { points: number; problem: ProblemSummary }[];
+};
+
+export type ContestLeaderboardEntry = {
+  rank: number;
+  displayName: string;
+  score: number;
+  solvedCount: number;
+  lastSolvedAt: string | null;
+};
+
 export type SubmissionLanguage = 'JAVA' | 'PYTHON' | 'CPP' | 'NODEJS';
 
 export type SubmissionStatus =
