@@ -56,6 +56,7 @@ let baseUrl: string;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(prisma.submission.updateMany).mockResolvedValue({ count: 1 });
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address() as AddressInfo;
@@ -115,6 +116,13 @@ describe('submission API', () => {
       data: { id: submissionId, status: SubmissionStatus.QUEUED, language: 'JAVA' },
     });
     expect(publishSubmission).toHaveBeenCalledWith(submissionId, 0);
+    expect(prisma.submission.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ needsDispatch: true }) }),
+    );
+    expect(prisma.submission.updateMany).toHaveBeenCalledWith({
+      where: { id: submissionId, status: SubmissionStatus.QUEUED, needsDispatch: true },
+      data: { needsDispatch: false },
+    });
     expect(publishSubmissionEvent).toHaveBeenCalledWith({
       type: 'submission:queued',
       submissionId,
@@ -388,6 +396,7 @@ describe('submission API', () => {
         sourceCode: 'public class Main {}',
         priority: 0,
         rerunOfExecutionId: executionId,
+        needsDispatch: true,
       },
       select: expect.objectContaining({ id: true, rerunOfExecutionId: true }),
     });

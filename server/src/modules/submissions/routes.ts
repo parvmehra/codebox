@@ -46,6 +46,19 @@ const cancellableStatuses = [
 export const submissionsRouter = Router();
 const log = logger.child({ component: 'submissions-api' });
 
+// Rows are created with needsDispatch=true so a crash before publishing is repaired by recovery.
+// Clearing the flag is best effort: if it fails the job is re-published, which workers tolerate.
+async function markDispatched(submissionId: string): Promise<void> {
+  await prisma.submission
+    .updateMany({
+      where: { id: submissionId, status: SubmissionStatus.QUEUED, needsDispatch: true },
+      data: { needsDispatch: false },
+    })
+    .catch((error: unknown) => {
+      log.warn({ error, submissionId }, 'Could not clear the dispatch flag');
+    });
+}
+
 submissionsRouter.post(
   '/',
   submissionRateLimiter,
@@ -106,6 +119,7 @@ submissionsRouter.post(
         language: input.language,
         sourceCode: input.sourceCode,
         priority: input.priority,
+        needsDispatch: true,
       },
       select: { id: true, status: true, language: true, priority: true, createdAt: true },
     });
@@ -124,6 +138,7 @@ submissionsRouter.post(
 
     try {
       await publishSubmission(submission.id, submission.priority);
+      await markDispatched(submission.id);
       submissionEnqueuesTotal.inc({ language: submission.language });
     } catch (error) {
       submissionEnqueueFailuresTotal.inc({ language: submission.language });
@@ -301,6 +316,7 @@ submissionsRouter.post(
         sourceCode: original.sourceCode,
         priority: original.priority,
         rerunOfExecutionId: sourceExecution.id,
+        needsDispatch: true,
       },
       select: {
         id: true,
@@ -326,6 +342,7 @@ submissionsRouter.post(
 
     try {
       await publishSubmission(rerun.id, rerun.priority);
+      await markDispatched(rerun.id);
       submissionEnqueuesTotal.inc({ language: rerun.language });
     } catch (error) {
       submissionEnqueueFailuresTotal.inc({ language: rerun.language });
