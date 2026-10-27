@@ -279,6 +279,20 @@ export async function executeSubmission(
     let totalExecutionTimeMs = 0;
 
     for (const [index, testCase] of options.testCases.entries()) {
+      if (index > 0) {
+        // Test cases share one container, so remove anything the previous run left behind.
+        const reset = await runCommand(
+          [
+            'exec',
+            containerId,
+            'sh',
+            '-c',
+            'kill -9 -1 2>/dev/null; rm -rf /tmp/* /tmp/.[!.]*; true',
+          ],
+          { timeoutMs: 15_000, signal: options.signal },
+        );
+        requireDockerSuccess(reset, 'reset isolated execution container between test cases');
+      }
       const startedAt = performance.now();
       const run = await runCommand(
         ['exec', '-i', containerId, ...withTimeout(profile.runCommand, profile.timeLimitMs)],
