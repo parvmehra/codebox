@@ -53,7 +53,7 @@ For deployment configuration, reverse-proxy routing, persistent data, and operat
 
 The scheduler defaults to FIFO. Set `SCHEDULER_STRATEGY=PRIORITY` to honor admin-set priorities from 0 to 10. Set `WORKER_LANGUAGES` to a comma-separated supported language list when running a specialized worker; it defaults to all four languages.
 
-The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana provisions the Codebox Operations dashboard and uses `GRAFANA_USER` / `GRAFANA_PASSWORD`; change the development defaults before sharing the host. The API exposes `/health/live`, `/health/ready`, and `/metrics`; the worker exposes equivalent health routes and metrics on its internal port 9101.
+The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana provisions the Codebox Operations dashboard and uses `GRAFANA_USER` / `GRAFANA_PASSWORD`; change the development defaults before sharing the host. The API exposes `/health/live` and `/health/ready` publicly and `/metrics` only on internal port 9100; the worker exposes equivalent health routes and metrics on its internal port 9101.
 
 ## Continuous integration
 

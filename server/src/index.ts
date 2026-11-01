@@ -8,6 +8,7 @@ import { closeSubmissionPublisher } from './queue/submissions.js';
 import { startSubmissionRecovery } from './modules/submissions/recovery.js';
 import { startSubmissionScheduler } from './queue/scheduler-service.js';
 import { logger } from './observability/logger.js';
+import { createMetricsServer } from './observability/metrics-server.js';
 import { startWorkerHistoryCleanup } from './realtime/worker-history-cleanup.js';
 
 const server = createServer(app);
@@ -17,6 +18,10 @@ const stopSubmissionScheduler = await startSubmissionScheduler();
 const stopSubmissionRecovery = await startSubmissionRecovery();
 const stopWorkerHistoryCleanup = startWorkerHistoryCleanup();
 server.listen(env.PORT, () => logger.info({ port: env.PORT }, 'API listening'));
+const metricsServer = createMetricsServer();
+metricsServer.listen(env.METRICS_PORT, () =>
+  logger.info({ port: env.METRICS_PORT }, 'API metrics listening'),
+);
 let isShuttingDown = false;
 
 async function shutdown(signal: string) {
@@ -25,6 +30,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, 'API shutdown requested');
 
   const socketServerClosed = new Promise<void>((resolve) => io.close(() => resolve()));
+  metricsServer.close();
   await stopWorkerHistoryCleanup();
   await stopSubmissionRecovery();
   await stopSubmissionScheduler();

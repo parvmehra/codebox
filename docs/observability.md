@@ -10,7 +10,7 @@ Phase 7 adds operational visibility without changing the API/worker architecture
 - Grafana: `http://localhost:3000`
 - API liveness: `http://localhost:4000/health/live`
 - API readiness: `http://localhost:4000/health/ready`
-- API metrics: `http://localhost:4000/metrics`
+- API metrics: `/metrics` on the internal metrics port `9100` (`METRICS_PORT`); it is not served on the public API port and Compose does not publish it
 - Worker health and metrics: `/health/live`, `/health/ready`, and `/metrics` on internal port `9101`
 
 Grafana provisions the Prometheus datasource and dashboard from `observability/grafana/`. The initial dashboard is **Codebox Operations**. Configure `GRAFANA_USER` and `GRAFANA_PASSWORD` in `.env`; the checked-in defaults are for local development. Prometheus retains 15 days of samples in its Compose volume.
@@ -33,7 +33,7 @@ The legacy API `/health` endpoint remains a simple liveness response for existin
 
 ## Metrics
 
-Prometheus scrapes the API at `api:4000/metrics` and the worker at `worker:9101/metrics` every 15 seconds. Custom metric labels use HTTP route templates, supported language enums, scheduler strategies, bounded submission statuses, and routing destinations. They do not use user IDs, submission IDs, source code, or raw URLs as labels.
+Prometheus scrapes the API at `api:9100/metrics` and the worker at `worker:9101/metrics` every 15 seconds. Custom metric labels use HTTP route templates, supported language enums, scheduler strategies, bounded submission statuses, and routing destinations. They do not use user IDs, submission IDs, source code, or raw URLs as labels.
 
 | Metric                                                                     | Process    | Meaning                                                       |
 | -------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------- |

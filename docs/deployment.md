@@ -24,7 +24,7 @@ TRUST_PROXY_HOPS=1
 
 ## Build and start
 
-Review the Compose port mappings before starting. The base file publishes Postgres (`5432`), RabbitMQ (`5672`, `15672`), API (`4000`), Prometheus (`9090`), Grafana (`3000`), and frontend (`5173`) to host interfaces for local access. For an internet-facing host, restrict those mappings with a deployment-specific Compose override or firewall rules; expose only the TLS reverse proxy publicly. Do not expose PostgreSQL, RabbitMQ, Prometheus, Grafana, or `/metrics` to the public internet.
+Review the Compose port mappings before starting. The base file publishes, on `127.0.0.1` only (set `POSTGRES_HOST_PORT` if 5432 is taken locally), Postgres (`5432`), RabbitMQ (`5672`, `15672`), API (`4000`), Prometheus (`9090`), Grafana (`3000`), and frontend (`5173`) to host interfaces for local access. For an internet-facing host, restrict those mappings with a deployment-specific Compose override or firewall rules; expose only the TLS reverse proxy publicly. Do not expose PostgreSQL, RabbitMQ, Prometheus, Grafana, or `/metrics` to the public internet.
 
 Route browser traffic through a TLS reverse proxy. It should serve the frontend and forward `/api` and the Socket.IO `/socket.io/` path, including WebSocket upgrades, to the API. Configure the proxy to preserve the original host and protocol and match `TRUST_PROXY_HOPS` to the actual trusted proxy chain.
 

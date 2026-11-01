@@ -100,8 +100,8 @@ Source, compile output (`/workspace`, `/exec`) and any background process persis
 - Register returns 409 for existing emails (account enumeration; low).
 - There is no way to create an admin without editing the DB.
 
-**F-07 — Medium — Dependency name risk** (`server/package.json`)
-Metrics library is `@prometheus-io/client@0.16.1`, not the canonical `prom-client`. Its package metadata claims to be `prometheus/client_js`, and I did not find malicious behavior, but I have not diffed it against upstream and could not verify its publisher. Treat as a supply-chain risk until replaced with `prom-client` (drop-in API) or verified.
+**F-07 — Withdrawn (false positive)** (`server/package.json`)
+I initially flagged `@prometheus-io/client` as a possible non-canonical package. Checking the npm registry showed it is published by the Prometheus team (`prombot`, `prometheus-team@googlegroups.com`) from `prometheus/client_js`, and the older `prom-client` is marked deprecated in its favor. No change needed.
 
 **F-08 — Medium — Unauthenticated operational endpoints**
 `GET /metrics` (API) and `GET /api/workers/status` have no auth and are published on port 4000. Data is low-sensitivity (no IDs in labels from what I read) but exposes route names, worker counts and process internals. Fix: restrict `/metrics` to the internal network.
@@ -136,7 +136,7 @@ Sandbox create flags are already strong: `--network none`, memory = memory-swap,
 
 1. **Phase 3 (sandbox) verification with Docker running**, including adversarial tests, and a decision on F-05 and F-01.
 2. **F-02** dispatch-window fix (small, high value) with a test.
-3. **F-03, F-07, F-08** secrets/ports/dependency/metrics exposure.
+3. **F-03, F-08** secrets/ports/metrics exposure (F-07 withdrawn).
 4. **Phase 2 baseline** with Docker: compose up, migrations, e2e scripts; write `verification-report.md`.
 5. **F-04** measured memory; **F-06** auth hardening (algorithm pin, DB-backed role check, admin bootstrap).
 6. Real-integration tests (Postgres + RabbitMQ in CI), cancellation/lease races (S-01, S-02).

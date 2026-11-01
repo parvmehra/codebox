@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { SubmissionStatus } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import { createMetricsServer } from '../../observability/metrics-server.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.doMock('../../database/prisma.js', () => ({
@@ -75,7 +76,7 @@ function authHeaders(role = 'USER'): HeadersInit {
 }
 
 describe('submission API', () => {
-  it('exposes liveness, dependency readiness, and Prometheus metrics', async () => {
+  it('exposes liveness and dependency readiness but not metrics on the public port', async () => {
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
 
     const liveness = await fetch(`${baseUrl}/health/live`);
@@ -89,10 +90,22 @@ describe('submission API', () => {
       checks: { database: true, scheduler: false },
     });
 
-    const metrics = await fetch(`${baseUrl}/metrics`);
-    expect(metrics.status).toBe(200);
-    expect(metrics.headers.get('content-type')).toContain('text/plain');
-    expect(await metrics.text()).toContain('# HELP codebox_http_requests_total');
+    expect((await fetch(`${baseUrl}/metrics`)).status).toBe(404);
+  });
+
+  it('serves Prometheus metrics only from the dedicated metrics server', async () => {
+    const metricsServer = createMetricsServer();
+    await new Promise<void>((resolve) => metricsServer.listen(0, resolve));
+    const { port } = metricsServer.address() as AddressInfo;
+    try {
+      const metrics = await fetch(`http://127.0.0.1:${port}/metrics`);
+      expect(metrics.status).toBe(200);
+      expect(metrics.headers.get('content-type')).toContain('text/plain');
+      expect(await metrics.text()).toContain('# HELP codebox_http_requests_total');
+      expect((await fetch(`http://127.0.0.1:${port}/api/problems`)).status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve) => metricsServer.close(() => resolve()));
+    }
   });
 
   it('saves and queues a submission for a published problem', async () => {

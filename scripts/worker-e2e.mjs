@@ -29,6 +29,23 @@ async function waitForApi(timeoutMs = 60_000) {
   throw new Error(`The API did not become healthy within ${timeoutMs} ms.`);
 }
 
+async function waitForPrometheusSeries(prometheusBase, query, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(
+        `${prometheusBase}/api/v1/query?query=${encodeURIComponent(query)}`,
+      );
+      const body = await response.json();
+      if (body.data?.result?.length > 0) return;
+    } catch {
+      // Prometheus may not have completed its first scrape yet.
+    }
+    await delay(2_000);
+  }
+  throw new Error(`Prometheus did not report ${query} within ${timeoutMs} ms.`);
+}
+
 async function request(path, { token, ...options } = {}) {
   const relativePath = path.replace(/^\/+/, '');
   const response = await fetch(new URL(relativePath, `${apiBase.replace(/\/$/, '')}/`), {
@@ -302,12 +319,18 @@ try {
   assert.equal(workerStatus.status, 'online');
   assert.ok(workerStatus.workerCount >= 1);
 
-  const metricsResponse = await fetch(new URL('/metrics', apiBase));
-  assert.equal(metricsResponse.ok, true, 'The API should expose Prometheus metrics.');
-  const metrics = await metricsResponse.text();
-  assert.match(metrics, /codebox_http_requests_total/);
-  assert.match(metrics, /codebox_submission_enqueues_total\{language="JAVA"\}/);
-  assert.match(metrics, /codebox_scheduler_assignments_total/);
+  // Metrics are served on an internal port only; the public API must not expose them.
+  const publicMetrics = await fetch(new URL('/metrics', apiBase));
+  assert.equal(publicMetrics.status, 404, 'The public API must not expose /metrics.');
+
+  const prometheusBase = process.env.PROMETHEUS_BASE_URL ?? 'http://127.0.0.1:9090';
+  for (const query of [
+    'codebox_http_requests_total',
+    'codebox_submission_enqueues_total{language="JAVA"}',
+    'codebox_scheduler_assignments_total',
+  ]) {
+    await waitForPrometheusSeries(prometheusBase, query);
+  }
 } finally {
   socket.disconnect();
   otherSocket.disconnect();

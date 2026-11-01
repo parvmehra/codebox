@@ -12,7 +12,7 @@ import { submissionsRouter } from './modules/submissions/routes.js';
 import { workersRouter } from './modules/workers/routes.js';
 import { collectHttpMetrics } from './observability/http-metrics.js';
 import { logger } from './observability/logger.js';
-import { apiReady, metricsRegistry, schedulerReady } from './observability/metrics.js';
+import { apiReady, schedulerReady } from './observability/metrics.js';
 import { isSubmissionSchedulerReady } from './queue/scheduler-service.js';
 
 export const app = express();
@@ -57,15 +57,6 @@ app.get('/health/ready', async (_request, response) => {
     status: ready ? 'ready' : 'not_ready',
     checks: { database: databaseIsReady, scheduler: schedulerIsReady },
   });
-});
-app.get('/metrics', async (_request, response, next) => {
-  try {
-    response.setHeader('content-type', metricsRegistry.contentType);
-    response.setHeader('cache-control', 'no-store');
-    response.send(await metricsRegistry.metrics());
-  } catch (error) {
-    next(error);
-  }
 });
 app.use('/api/auth', authRouter);
 app.use('/api/contests', contestsRouter);
