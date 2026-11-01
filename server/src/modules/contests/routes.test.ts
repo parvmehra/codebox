@@ -7,6 +7,7 @@ vi.doMock('../../database/prisma.js', () => ({
   prisma: {
     contest: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
     contestParticipant: { findUnique: vi.fn(), create: vi.fn() },
+    user: { findUnique: vi.fn() },
     contestProblem: { findUnique: vi.fn() },
     problem: { findMany: vi.fn() },
     submission: { findMany: vi.fn() },
@@ -41,7 +42,9 @@ afterEach(async () => {
   });
 });
 
-function authHeaders(role = 'USER'): HeadersInit {
+function authHeaders(role = 'USER', databaseRole = role): HeadersInit {
+  // Privileged routes re-read the role from the database, which can differ from the token.
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({ role: databaseRole } as never);
   const token = jwt.sign({ id: userId, role }, env.JWT_SECRET);
   return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 }

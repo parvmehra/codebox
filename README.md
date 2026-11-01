@@ -53,6 +53,16 @@ For deployment configuration, reverse-proxy routing, persistent data, and operat
 
 The scheduler defaults to FIFO. Set `SCHEDULER_STRATEGY=PRIORITY` to honor admin-set priorities from 0 to 10. Set `WORKER_LANGUAGES` to a comma-separated supported language list when running a specialized worker; it defaults to all four languages.
 
+### Creating the first admin
+
+No account is an admin by default. Register through the app, then promote that account from the command line (done this way so nobody can claim admin by signing up first):
+
+```bash
+docker compose exec api node server/dist/scripts/promote-admin.js you@example.com
+```
+
+The role is checked against the database on admin routes, so the change applies immediately and a demoted admin loses access without waiting for the token to expire.
+
 The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana provisions the Codebox Operations dashboard and uses `GRAFANA_USER` / `GRAFANA_PASSWORD`; change the development defaults before sharing the host. The API exposes `/health/live` and `/health/ready` publicly and `/metrics` only on internal port 9100; the worker exposes equivalent health routes and metrics on its internal port 9101.
 
 ## Continuous integration

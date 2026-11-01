@@ -4,7 +4,11 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../config/env.js';
 import { prisma } from '../../database/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/auth.js';
-import { loginRateLimiter, registrationRateLimiter } from '../../middleware/rate-limit.js';
+import {
+  loginAccountRateLimiter,
+  loginRateLimiter,
+  registrationRateLimiter,
+} from '../../middleware/rate-limit.js';
 import { HttpError } from '../../utils/http-error.js';
 import { credentials } from './validation.js';
 const publicUser = (user: { id: string; email: string; role: string }) => ({
@@ -13,7 +17,10 @@ const publicUser = (user: { id: string; email: string; role: string }) => ({
   role: user.role,
 });
 const tokenFor = (user: { id: string; role: string }) =>
-  jwt.sign({ id: user.id, role: user.role }, env.JWT_SECRET, { expiresIn: '1h' });
+  jwt.sign({ id: user.id, role: user.role }, env.JWT_SECRET, {
+    expiresIn: '1h',
+    algorithm: 'HS256',
+  });
 export const authRouter = Router();
 authRouter.post('/register', registrationRateLimiter, async (request, response) => {
   const input = credentials.parse(request.body);
@@ -25,7 +32,7 @@ authRouter.post('/register', registrationRateLimiter, async (request, response) 
   });
   return response.status(201).json({ user: publicUser(user), token: tokenFor(user) });
 });
-authRouter.post('/login', loginRateLimiter, async (request, response) => {
+authRouter.post('/login', loginRateLimiter, loginAccountRateLimiter, async (request, response) => {
   const input = credentials.parse(request.body);
   const user = await prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
   if (!user || !(await bcrypt.compare(input.password, user.passwordHash)))

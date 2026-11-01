@@ -73,4 +73,25 @@ describe('in-process rate limiter', () => {
     expect(resetIp.statusCode).toBe(200);
     expect(next).toHaveBeenCalledTimes(3);
   });
+
+  it('can key a limiter by something other than the client IP', () => {
+    const limiter = createRateLimiter({
+      maxRequests: 1,
+      windowMs: 1_000,
+      message: 'slow down',
+      keyFor: (request) => (request.body as { email: string }).email,
+    });
+    const send = (email: string, ip: string) => {
+      const recorder = responseRecorder();
+      const next = vi.fn();
+      limiter({ ...requestFor(ip), body: { email } } as Request, recorder.response, next);
+      return { recorder, next };
+    };
+
+    expect(send('a@example.test', '1.1.1.1').next).toHaveBeenCalled();
+    const second = send('a@example.test', '2.2.2.2');
+    expect(second.next).not.toHaveBeenCalled();
+    expect(second.recorder.statusCode).toBe(429);
+    expect(send('b@example.test', '1.1.1.1').next).toHaveBeenCalled();
+  });
 });

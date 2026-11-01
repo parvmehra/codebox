@@ -13,7 +13,7 @@ export function createSocketServer(httpServer: HttpServer): Server {
     if (typeof token !== 'string') return next(new Error('Authentication is required.'));
 
     try {
-      const payload = jwt.verify(token, env.JWT_SECRET);
+      const payload = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
       if (typeof payload === 'string' || typeof payload.id !== 'string') {
         return next(new Error('The authentication token is invalid.'));
       }

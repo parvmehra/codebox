@@ -12,6 +12,7 @@ vi.doMock('../../database/prisma.js', () => ({
     problem: { findFirst: vi.fn(), findUnique: vi.fn() },
     contest: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
     contestParticipant: { findUnique: vi.fn(), create: vi.fn() },
+    user: { findUnique: vi.fn() },
     contestProblem: { findUnique: vi.fn() },
     testCase: {
       findMany: vi.fn(),
@@ -70,7 +71,9 @@ afterEach(async () => {
   });
 });
 
-function authHeaders(role = 'USER'): HeadersInit {
+function authHeaders(role = 'USER', databaseRole = role): HeadersInit {
+  // Privileged routes re-read the role from the database, which can differ from the token.
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({ role: databaseRole } as never);
   const token = jwt.sign({ id: userId, role }, env.JWT_SECRET);
   return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 }
@@ -106,6 +109,26 @@ describe('submission API', () => {
     } finally {
       await new Promise<void>((resolve) => metricsServer.close(() => resolve()));
     }
+  });
+
+  it('rejects an admin token once the account has been demoted', async () => {
+    const response = await fetch(`${baseUrl}/api/problems/${problemId}/test-cases`, {
+      method: 'POST',
+      headers: authHeaders('ADMIN', 'USER'),
+      body: JSON.stringify({ input: '1 2', expectedOut: '3' }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(prisma.testCase.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects tokens signed with an algorithm other than HS256', async () => {
+    const token = jwt.sign({ id: userId, role: 'USER' }, env.JWT_SECRET, { algorithm: 'HS512' });
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(401);
   });
 
   it('saves and queues a submission for a published problem', async () => {

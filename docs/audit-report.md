@@ -156,3 +156,9 @@ Docker Desktop (Engine 28.5.2) was available, so the sandbox was exercised for r
 - **F-05 confirmed and fixed**: a process and file from test 1 were visible in test 2. The executor now kills all sandbox-user processes and clears `/tmp` between tests. The new test fails without the change and passes with it. `/workspace` (source/binary) is not reset.
 - **F-02 fixed**: submissions and reruns are created with `needsDispatch=true` and cleared after a confirmed publish, so recovery re-publishes anything stranded by a crash. Unit tests updated; a crash-injection test against a real broker is still to do.
 - Server unit tests: 92 passed, 14 Docker tests skipped without the opt-in flag; lint and typecheck clean. Changes are uncommitted.
+
+## Status update: auth hardening (F-06)
+
+Fixed and verified (unit tests plus a live check against a running API container): JWT algorithm pinned to HS256 for signing, API verification and Socket.IO; admin routes now read the role from the database, so promotions and demotions apply immediately (tested for a demoted admin); per-account login rate limit in addition to per-IP (live: 429 on the 11th attempt); operator command `promote-admin` to create the first admin (live: 403 before, 201 after, same token).
+
+Still open from F-06: tokens remain in `localStorage` (XSS-readable) and cannot be revoked before expiry for non-admin routes; the rate limiter is in-memory per process, so it resets on restart and is not shared across replicas; registration still reveals whether an email exists (409). These are documented limitations, not fixed.
