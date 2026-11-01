@@ -63,3 +63,29 @@ The metrics endpoints do not require authentication. Keep ports `4000`, `9090`, 
 - **Important failure cases:** a failed database or scheduler probe makes API readiness return `503`; a stopped worker makes its Prometheus target report `up = 0`; metrics scraping does not replace durable database records.
 - **Interview question — Why keep metrics separate from logs?** Logs explain an individual event, while counters and histograms show how behavior changes over time.
 - **Interview question — Why use bounded labels?** User IDs and submission IDs would create a new time series for every request. Route templates, language names, and result enums keep metric cardinality predictable.
+
+## Metric reference and limitations
+
+Every process registers every metric, but only the owning process sets it. A gauge read from the wrong job shows a misleading `0`, so always scope gauges by job (the dashboard does: `{job="worker"}`, `{job="api"}`). The API serves `/metrics` on `METRICS_PORT` (9100, not published); the worker on 9101.
+
+| Metric | Type | Owner | Meaning and limits |
+|---|---|---|---|
+| `codebox_http_requests_total`, `codebox_http_request_duration_seconds` | counter, histogram | api | Completed requests by method, route template and status. Labels use route templates, never raw URLs or IDs. |
+| `codebox_submission_enqueues_total`, `codebox_submission_enqueue_failures_total` | counters | api | Publishes to the scheduler ingress that succeeded or failed, by language. A failed publish marks the submission `SYSTEM_ERROR`. The failure series does not exist until the first failure. |
+| `codebox_scheduler_assignments_total` | counter | api | Jobs routed to a worker queue (or the wait queue), by language, strategy, destination. |
+| `codebox_scheduler_target_queue_depth` | histogram | api | Depth of the chosen worker queue **at the moment of assignment**. This is a sample per assignment, not a continuous queue-depth gauge. |
+| `codebox_submission_queue_wait_seconds` | histogram | worker | Seconds from the last enqueue time to a worker claiming the job. Approximate: recovery re-publishing resets the start time, and retries restart it. |
+| `codebox_worker_jobs_processed_total` | counter | worker | Deliveries that ended with a persisted status, by status. This is the submission outcome count (`ACCEPTED`, `WRONG_ANSWER`, ...). |
+| `codebox_worker_job_duration_seconds` | histogram | worker | Wall-clock time of one delivery, including compile and all test cases. |
+| `codebox_worker_job_retries_total` | counter | worker | Deliveries copied to the delayed retry queue after a transient failure. |
+| `codebox_sandbox_failures_total{reason}` | counter | worker | Attempts that failed for infrastructure reasons (`docker_error`, `unexpected`), not because of the submitted code. Absent until the first failure. |
+| `codebox_worker_active_submissions` | gauge | worker | Submissions executing in this worker process (limited to 1 by prefetch). |
+| `codebox_worker_ready`, `codebox_api_ready`, `codebox_api_scheduler_ready` | gauges | worker / api | 1 when the owning process considers itself ready. `codebox_api_ready` is refreshed when `/health/ready` is called. |
+
+Worker count comes from `up{job="worker"}` (a Prometheus scrape, so it counts reachable processes, not heartbeat-healthy ones). Worker heartbeats are stored in PostgreSQL and exposed through `GET /api/workers/status`, not as a metric. Container execution failures are the `docker_error` reason above; there is no per-language failure breakdown.
+
+There is no user, submission or source-code label anywhere, and no secrets or personal data in any metric.
+
+### Realtime events are not the source of truth
+
+Socket.IO events are only hints. The frontend refetches the submission from the API on every event and on every (re)connect, so duplicate, missed or out-of-order events cannot corrupt what the user sees; the database stays authoritative. The e2e suites verify that a user receives only their own events.

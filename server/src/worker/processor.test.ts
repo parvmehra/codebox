@@ -28,12 +28,17 @@ vi.doMock('../database/prisma.js', () => ({
   },
 }));
 
+class FakeDockerCommandError extends Error {}
+
 vi.doMock('./docker-executor.js', () => ({
   executeSubmission: mocks.executeSubmission,
+  DockerCommandError: FakeDockerCommandError,
   SourceSizeLimitError: class SourceSizeLimitError extends Error {},
 }));
 
 const { processSubmission, RetryableSubmissionError } = await import('./processor.js');
+const { sandboxFailuresTotal, submissionQueueWaitSeconds } =
+  await import('../observability/metrics.js');
 
 const submissionId = 'c3070e38-c557-43d5-a59b-e8af46675370';
 const executionId = '48a6a0a4-828e-4ea0-a9ec-60509f663ca5';
@@ -48,6 +53,7 @@ beforeEach(() => {
     language: SubmissionLanguage.JAVA,
     sourceCode: 'public class Main {}',
     attemptCount: 1,
+    lastEnqueuedAt: new Date(Date.now() - 4_000),
     problem: { testCases: [{ id: testCaseId, version: 1 }] },
     rerunOfExecution: null,
   });
@@ -168,6 +174,7 @@ describe('submission worker processor', () => {
       language: SubmissionLanguage.JAVA,
       sourceCode: 'public class Main {}',
       attemptCount: 1,
+      lastEnqueuedAt: new Date(),
       problem: { testCases: [] },
       rerunOfExecution: {
         dockerImage: 'eclipse-temurin:21-jdk-jammy',
@@ -223,8 +230,10 @@ describe('submission worker processor', () => {
   });
 
   it('releases a lease after Docker or persistence failures so RabbitMQ can retry', async () => {
-    mocks.executeSubmission.mockRejectedValue(new Error('private daemon address'));
+    mocks.executeSubmission.mockRejectedValue(new FakeDockerCommandError('private daemon address'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    sandboxFailuresTotal.reset();
+    submissionQueueWaitSeconds.reset();
 
     await expect(processSubmission(submissionId, mocks.publishEvent)).rejects.toBeInstanceOf(
       RetryableSubmissionError,
@@ -247,6 +256,13 @@ describe('submission worker processor', () => {
       type: 'submission:queued',
       status: SubmissionStatus.QUEUED,
     });
+    const failures = (await sandboxFailuresTotal.get()).values;
+    expect(failures).toEqual([
+      expect.objectContaining({ labels: { reason: 'docker_error' }, value: 1 }),
+    ]);
+    const waits = (await submissionQueueWaitSeconds.get()).values;
+    const waitSum = waits.find((entry) => entry.metricName?.endsWith('_sum'));
+    expect(waitSum?.value).toBeGreaterThanOrEqual(3.5);
   });
 
   it('persists compiler diagnostics as a terminal compilation error', async () => {

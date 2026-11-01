@@ -90,3 +90,17 @@ export const workerJobDurationSeconds = new Histogram({
   buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120],
   registers: [metricsRegistry],
 });
+
+export const submissionQueueWaitSeconds = new Histogram({
+  name: 'codebox_submission_queue_wait_seconds',
+  help: 'Seconds between a submission being (re)enqueued and a worker claiming it. Approximate: recovery re-publishing resets the start time.',
+  buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+  registers: [metricsRegistry],
+});
+
+export const sandboxFailuresTotal = new Counter({
+  name: 'codebox_sandbox_failures_total',
+  help: 'Execution attempts that failed for infrastructure reasons (not the submitted code). Reasons: docker_error, unexpected.',
+  labelNames: ['reason'],
+  registers: [metricsRegistry],
+});

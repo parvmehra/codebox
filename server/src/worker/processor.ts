@@ -9,7 +9,9 @@ import {
 } from '../modules/submissions/state-machine.js';
 import type { Prisma } from '@prisma/client';
 import type { SubmissionRealtimeEvent, SubmissionStateEvent } from '../realtime/events.js';
+import { submissionQueueWaitSeconds, sandboxFailuresTotal } from '../observability/metrics.js';
 import {
+  DockerCommandError,
   executeSubmission,
   type ExecutionResult,
   SourceSizeLimitError,
@@ -131,6 +133,7 @@ export async function processSubmission(
         language: true,
         sourceCode: true,
         attemptCount: true,
+        lastEnqueuedAt: true,
         problem: {
           select: {
             testCases: {
@@ -164,6 +167,9 @@ export async function processSubmission(
     if (!submission) throw new Error('Submission disappeared after it was assigned.');
     userId = submission.userId;
     attemptNumber = submission.attemptCount;
+    submissionQueueWaitSeconds.observe(
+      Math.max(0, (Date.now() - submission.lastEnqueuedAt.getTime()) / 1_000),
+    );
     emitStateEvent(publishEvent, {
       type: 'submission:assigned',
       submissionId,
@@ -335,6 +341,9 @@ export async function processSubmission(
       return { processed: true, status: SubmissionStatus.SYSTEM_ERROR };
     }
 
+    sandboxFailuresTotal.inc({
+      reason: error instanceof DockerCommandError ? 'docker_error' : 'unexpected',
+    });
     assertSubmissionTransition(currentStatus, SubmissionStatus.QUEUED);
     const released = await prisma.submission.updateMany({
       where: { id: submissionId, status: currentStatus, leaseToken },
