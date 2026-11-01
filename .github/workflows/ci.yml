@@ -15,13 +15,11 @@ concurrency:
 
 jobs:
   verify:
+    name: Lint, typecheck, unit tests, build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-
-      - name: Generate a throwaway JWT secret
-        run: echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v7
         with:
@@ -37,22 +35,93 @@ jobs:
       - run: npm run typecheck
       - run: npm run test --workspace=@platform/server
       - run: npm run build
+
+  sandbox:
+    name: Sandbox adversarial tests (real Docker on Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate --workspace=@platform/server
+
+      # Runs hostile programs (infinite loops, fork and memory bombs, output floods) in the
+      # sandbox for Python, Node.js, Java and C++. Linux is the deployment target, so this is the
+      # run that proves cgroup, seccomp and read-only-rootfs behaviour on a real host.
+      - name: Run the sandbox suite
+        env:
+          CODEBOX_DOCKER_TESTS: '1'
+        run: npx vitest run src/worker/docker-executor.integration.test.ts
+        working-directory: server
+
+  e2e:
+    name: End-to-end suites (Compose stack)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate a throwaway JWT secret
+        run: echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
       - name: Build application containers
         run: docker compose build api worker frontend
 
-      - name: Start worker integration stack
+      - name: Start the stack
         run: docker compose up -d postgres rabbitmq api worker prometheus grafana
 
-      - name: Verify the multi-language worker flow
+      - name: Wait for the worker to pull its images and become healthy
+        run: |
+          for i in $(seq 1 150); do
+            status="$(docker compose ps worker --format '{{.Status}}')"
+            case "$status" in *'(healthy)'*) exit 0;; esac
+            sleep 4
+          done
+          echo "worker never became healthy" >&2
+          exit 1
+
+      # Registration is limited to 5 per hour per IP and the limiter is in memory, so the API is
+      # restarted between suites. The limits themselves stay enabled.
+      - name: Multi-language worker flow
         run: node scripts/worker-e2e.mjs
 
-      - name: Verify metrics scraping and Grafana
+      - name: Metrics scraping and Grafana
         run: node scripts/observability-e2e.mjs
 
-      - name: Show integration service logs after failure
+      - name: Correctness, ownership, hidden cases, reruns, cancellation, concurrency
+        run: |
+          docker compose restart api
+          node scripts/correctness-e2e.mjs
+
+      - name: Scheduler ordering and capability matching
+        run: |
+          docker compose restart api
+          node scripts/scheduler-e2e.mjs
+
+      - name: Failure recovery (kills and stops services on purpose)
+        run: |
+          docker compose restart api
+          node scripts/recovery-e2e.mjs
+
+      - name: Show service logs after failure
         if: failure()
         run: docker compose logs --no-color api postgres rabbitmq worker prometheus grafana
 
-      - name: Stop integration stack
+      - name: Stop the stack
         if: always()
         run: docker compose down --volumes --remove-orphans
