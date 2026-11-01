@@ -1,5 +1,7 @@
 # Distributed Code Execution & Evaluation Platform
 
+[![CI](https://github.com/parvmehra/codebox/actions/workflows/ci.yml/badge.svg)](https://github.com/parvmehra/codebox/actions/workflows/ci.yml)
+
 The project has a React client with a Monaco code editor, a modular Express API, PostgreSQL with Prisma, JWT authentication, problem browsing, a queue-depth-aware scheduler, and language-aware workers. Authenticated users can enqueue Java 21, Python 3.12, C++23, and Node.js 22 submissions; matching workers compile or check and evaluate them in short-lived Docker containers and store per-test verdicts. Submission details receive live Socket.IO status and test-progress events, with REST polling as a fallback.
 
 ## Architecture
@@ -82,7 +84,7 @@ The e2e suites create their own problems and accounts and restart services on pu
 
 ## Continuous integration
 
-GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on pushes to `main` and pull requests: `verify` (lint, typecheck, unit tests, build), `sandbox` (the real-Docker adversarial suite on Linux) and `e2e` (builds the images, starts the stack, and runs every live suite above). The workflow has not yet been run on GitHub; its action versions are pinned by tag, not by commit SHA.
+GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on pushes to `main` and pull requests: `verify` (lint, typecheck, unit tests, build), `sandbox` (the real-Docker adversarial suite on Linux) and `e2e` (builds the images, starts the stack, and runs every live suite above). All three jobs pass on GitHub-hosted `ubuntu-24.04` runners. Action versions are pinned by tag, not by commit SHA.
 
 ## Implemented endpoints
 
@@ -158,7 +160,7 @@ Known limitations, stated plainly:
 - **The Monaco editor loads from a CDN** (`@monaco-editor/react` default), so the editor needs internet access and a strict Content-Security-Policy would break it.
 - **The UI was not tested in a real browser.** The frontend build, serving, routing, CORS and headers were checked over HTTP only; there are no frontend tests.
 - **Per-job overhead dominates** (about 1.1 s for a 0.25 s program). A pool is saturated quickly; see the benchmark bottleneck notes.
-- **Results above were produced on one Windows laptop.** Rerun the sandbox and e2e suites on the deployment host.
+- **Local results were produced on one Windows laptop;** the sandbox and e2e suites also pass on GitHub-hosted Linux runners. Rerun them on any other deployment host.
 - Dead-lettered messages need operator inspection; there is no replay UI. Prettier reports 20 files that were unformatted before this work.
 
 Future improvements: a warm-container pool, a stronger isolation runtime, shared rate limiting, a browser-level test suite, bundling Monaco locally, and a replay tool for the dead-letter queue.

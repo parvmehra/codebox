@@ -50,4 +50,4 @@ Run on the same Windows/Docker Desktop host, against the commits that introduced
 | Dashboard | every panel query returns data on a live Prometheus |
 | Frontend | served over HTTP with SPA fallback, CORS and security headers verified; **not tested in a browser** |
 
-Not covered: GitHub Actions (never run), a real Linux host (Docker Desktop/WSL2 only), crashes at exact points inside compile or between tests, database or broker loss while a worker is mid-run, and a browser-level UI test.
+GitHub Actions: all three jobs (verify, sandbox, e2e) passed on ubuntu-24.04 runners, run 41300993513, which also covers a real Linux host. Not covered: crashes at exact points inside compile or between tests, database or broker loss while a worker is mid-run, and a browser-level UI test.

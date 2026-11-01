@@ -179,7 +179,7 @@ Still open from F-06: tokens remain in `localStorage` (XSS-readable) and cannot 
 | F-06 Auth gaps | Medium | **Mostly fixed.** Algorithm pinned, DB-checked roles (admin routes and priority), per-account login limit, admin bootstrap. Open: `localStorage` token, no revocation, in-memory limiter, email enumeration. | Unit tests + live checks |
 | F-07 Dependency name | Medium | **Withdrawn, false positive.** `@prometheus-io/client` is the official package. | npm registry metadata |
 | F-08 Open operational endpoints | Medium | **Fixed for `/metrics`** (internal port). `/api/workers/status` remains public by design (aggregate counts only). | `correctness-e2e`, live curl |
-| F-09 Tests did not cover risky paths | Medium | **Fixed.** Five live suites plus a real-Docker suite, wired into CI (CI itself not yet run on GitHub). | See README Testing |
+| F-09 Tests did not cover risky paths | Medium | **Fixed.** Five live suites plus a real-Docker suite, wired into CI (all pass in GitHub Actions on Linux). | See README Testing |
 | F-10 Reruns are new submissions | Low/Medium | **Accepted, documented.** Original untouched, replays recorded versions; image tag pinning noted. | `correctness-e2e` |
 | F-11 Unbounded problems list | Low | **Fixed.** `limit` max 100 with cursor. | `correctness-e2e` |
 | F-12 CI hygiene | Low | **Partly fixed.** Jobs split and all suites added. Actions still pinned by tag; no format check (20 pre-existing unformatted files). | `ci.yml` |
