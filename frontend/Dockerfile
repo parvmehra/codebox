@@ -9,5 +9,6 @@ RUN npm install
 COPY frontend frontend
 RUN npm run build --workspace=@platform/frontend
 FROM nginx:1.27-alpine
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 EXPOSE 80
