@@ -1,6 +1,10 @@
 import { SubmissionStatus, TestResultStatus } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
-import { executeSubmission, type PersistedTestResult } from './docker-executor.js';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  ensureLanguageImages,
+  executeSubmission,
+  type PersistedTestResult,
+} from './docker-executor.js';
 import {
   CPP_23_PROFILE,
   JAVA_21_PROFILE,
@@ -9,7 +13,17 @@ import {
 } from './language-profile.js';
 
 // Runs real Docker containers. Opt in with CODEBOX_DOCKER_TESTS=1 (images must be pullable).
-const describeDocker = process.env.CODEBOX_DOCKER_TESTS === '1' ? describe : describe.skip;
+const dockerTestsEnabled = process.env.CODEBOX_DOCKER_TESTS === '1';
+const describeDocker = dockerTestsEnabled ? describe : describe.skip;
+
+if (dockerTestsEnabled) {
+  // A fresh host (such as a CI runner) has none of the language images; pulling them inside a test
+  // would blow its timeout, so fetch them once up front.
+  vi.setConfig({ testTimeout: 60_000 });
+  beforeAll(async () => {
+    await ensureLanguageImages();
+  }, 900_000);
+}
 
 type Case = { input: string; expectedOut: string };
 
