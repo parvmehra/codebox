@@ -40,6 +40,7 @@ export type ExecuteSubmissionOptions = {
   sourceCode: string;
   testCases: ExecutionTestCase[];
   imageReference?: string;
+  workerId?: string;
   signal?: AbortSignal;
   onPhase: (status: Extract<SubmissionStatus, 'COMPILING' | 'RUNNING'>) => Promise<void>;
   onTestResult: (result: PersistedTestResult) => Promise<void>;
@@ -100,11 +101,13 @@ export function buildSandboxCreateArgs(
   containerName: string,
   profile: LanguageProfile,
   imageReference = profile.dockerImage,
+  workerId?: string,
 ): string[] {
   return [
     'create',
     '--name',
     containerName,
+    ...(workerId ? ['--label', `codebox.worker=${workerId}`] : []),
     '--network',
     profile.networkPolicy,
     '--memory',
@@ -184,7 +187,7 @@ export async function executeSubmission(
     }
 
     const create = await runCommand(
-      buildSandboxCreateArgs(containerName, profile, imageReference),
+      buildSandboxCreateArgs(containerName, profile, imageReference, options.workerId),
       {
         timeoutMs: 30_000,
         signal: options.signal,

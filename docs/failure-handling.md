@@ -40,3 +40,20 @@ On worker shutdown, the consumer stops accepting new work and waits up to 18 sec
 - **Important failure cases:** if a worker crashes, the message may be redelivered before its lease expires; the duplicate is acknowledged and the recovery loop republishes the job when the lease becomes stale. If a broker confirm is lost, duplicate delivery is safe because the database claim is conditional.
 - **Interview question — Why acknowledge after retry publishing?** Confirming the replacement first means RabbitMQ never removes the only known copy before the next attempt or dead-letter copy is durable.
 - **Interview question — Why keep a lease token if attempt count is stored?** Attempt count distinguishes historical executions; the random lease token prevents an old worker from updating the row after recovery assigns a new attempt.
+
+## Verified failure scenarios
+
+`scripts/recovery-e2e.mjs` drives a real Compose stack (postgres, rabbitmq, api, worker) and was run against the commit that introduced it. It stops and kills services on purpose, so use a disposable local stack. `RECOVERY_ONLY` is a regex that selects scenarios by name.
+
+| Scenario | Verified behavior |
+|---|---|
+| Duplicate delivery of a finished job (re-published twice) | Stays `ACCEPTED`, one `Execution`, one test result row. The claim is a compare-and-set on `QUEUED`, so redeliveries are acknowledged and ignored. This also stands in for "worker finished but crashed before ack". |
+| API dies after insert, before publish (simulated by inserting a `QUEUED` row with `needsDispatch=true`) | Recovery loop re-publishes it and the job completes. The real crash window was not timed; the stranded state it leaves was. |
+| Job submitted while no worker is running | Waits in `QUEUED`, completes once a worker starts. |
+| Worker `SIGKILL` mid-run | Lease expires, recovery re-queues, a second attempt finishes `ACCEPTED`. Both attempts are recorded, none left open. The orphaned sandbox container is removed by the sandbox reaper (container labelled with its worker id; removed once that worker misses its 45 s heartbeat TTL; sweeps every 30 s). Total recovery was about 75 s. |
+| RabbitMQ stopped | API stays up. Submissions return `503 QUEUE_UNAVAILABLE` after about 12 s (slow, not instant) and the submission is marked `SYSTEM_ERROR`, so the user must resubmit. The API scheduler reconnects with backoff (2 s to 30 s) and new submissions work after the broker returns. |
+| PostgreSQL stopped | Requests return 500, `/health/ready` reports not ready. The API recovers without a restart once Postgres returns. |
+
+Defects found and fixed while writing these tests: the API scheduler never reconnected after a broker loss (stayed not-ready forever); a killed worker leaked its sandbox container.
+
+Not covered: crash at exact points inside compilation or between tests, a database outage in the middle of a worker run, broker loss in the middle of a worker run (the worker exits on broker loss and Docker restarts it; not exercised here), and cancel/complete races.

@@ -31,6 +31,7 @@ import { publishRealtimeEvent } from '../realtime/publish.js';
 import { persistWorkerHeartbeat } from '../realtime/worker-status.js';
 import { ensureLanguageImages } from './docker-executor.js';
 import { failQueuedSubmission, processSubmission } from './processor.js';
+import { reapOrphanedSandboxes, SANDBOX_REAP_INTERVAL_MS } from './sandbox-reaper.js';
 
 const submissionJob = z.object({ submissionId: z.string().uuid() });
 const cancellationMessage = z.object({ submissionId: z.string().uuid() });
@@ -53,6 +54,7 @@ let consumerTag: string | undefined;
 let controlConsumerTag: string | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let cancellationTimer: NodeJS.Timeout | undefined;
+let reaperTimer: NodeJS.Timeout | undefined;
 let isShuttingDown = false;
 const activeMessages = new Set<Promise<void>>();
 const activeSubmissions = new Map<string, ActiveSubmission>();
@@ -126,6 +128,13 @@ async function startWorker(): Promise<void> {
   cancellationTimer = setInterval(() => void monitorActiveSubmissions(), CANCELLATION_POLL_MS);
   cancellationTimer.unref();
   await publishWorkerHeartbeat(WorkerStatus.ONLINE);
+  const reap = () =>
+    void reapOrphanedSandboxes(workerId).catch((error: unknown) => {
+      log.warn({ error }, 'Sandbox reaper pass failed');
+    });
+  reap();
+  reaperTimer = setInterval(reap, SANDBOX_REAP_INTERVAL_MS);
+  reaperTimer.unref();
   log.info(
     { queue: workerQueue, workerId, capabilities: workerCapabilities, consumerTag },
     'Submission worker is ready',
@@ -320,6 +329,7 @@ async function shutdown(signalName: string): Promise<void> {
   log.info({ signal: signalName }, 'Worker shutdown requested');
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (cancellationTimer) clearInterval(cancellationTimer);
+  if (reaperTimer) clearInterval(reaperTimer);
 
   if (consumerTag) await channel?.cancel(consumerTag).catch(() => undefined);
   if (controlConsumerTag) await channel?.cancel(controlConsumerTag).catch(() => undefined);

@@ -234,6 +234,7 @@ export async function processSubmission(
       sourceCode: submission.sourceCode,
       testCases,
       imageReference,
+      workerId,
       signal,
       onImageIdentity: async (identity) => {
         await prisma.execution.update({ where: { id: execution.id }, data: identity });

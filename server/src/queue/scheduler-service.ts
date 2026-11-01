@@ -33,17 +33,63 @@ let connection: ChannelModel | undefined;
 let channel: ConfirmChannel | undefined;
 let consumerTags: string[] = [];
 let schedulerIsReady = false;
+let stopRequested = false;
 const activeDeliveries = new Set<Promise<void>>();
 
 export function isSubmissionSchedulerReady(): boolean {
   return schedulerIsReady;
 }
 
+const RECONNECT_MIN_DELAY_MS = 2_000;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+let reconnecting = false;
+
 export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
-  connection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
-  channel = await connection.createConfirmChannel();
-  await assertSubmissionTopology(channel);
-  await channel.prefetch(1);
+  stopRequested = false;
+  await connectScheduler();
+  return stopSubmissionScheduler;
+}
+
+// The API keeps serving requests while the broker is away: readiness reports the scheduler as
+// down, new submissions fail fast, and this loop re-establishes the consumers with backoff.
+async function reconnectScheduler(): Promise<void> {
+  if (reconnecting) return;
+  reconnecting = true;
+  let delayMs = RECONNECT_MIN_DELAY_MS;
+  try {
+    while (!stopRequested) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (stopRequested) return;
+      try {
+        await connectScheduler();
+        log.info('Scheduler reconnected to RabbitMQ');
+        return;
+      } catch (error) {
+        log.warn({ error, retryInMs: delayMs }, 'Scheduler could not reconnect to RabbitMQ');
+        delayMs = Math.min(delayMs * 2, RECONNECT_MAX_DELAY_MS);
+      }
+    }
+  } finally {
+    reconnecting = false;
+  }
+}
+
+async function connectScheduler(): Promise<void> {
+  const nextConnection = await amqp.connect(runtimeEnv.RABBITMQ_URL);
+  try {
+    channel = await nextConnection.createConfirmChannel();
+    connection = nextConnection;
+    await assertSubmissionTopology(channel);
+    await channel.prefetch(1);
+    await registerConsumers(nextConnection);
+  } catch (error) {
+    await nextConnection.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function registerConsumers(currentConnection: ChannelModel): Promise<void> {
+  if (!channel) throw new Error('The scheduler channel is unavailable.');
 
   const consumers = await Promise.all(
     [SUBMISSION_INGRESS_QUEUE, SUBMISSION_QUEUE].map((queue) =>
@@ -67,11 +113,15 @@ export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
   );
   consumerTags = consumers.map(({ consumerTag }) => consumerTag);
 
-  connection.on('error', (error: Error) => {
+  currentConnection.on('error', (error: Error) => {
     setSchedulerReady(false);
     log.error({ error }, 'Scheduler RabbitMQ connection error');
   });
-  connection.on('close', () => setSchedulerReady(false));
+  currentConnection.on('close', () => {
+    if (connection !== currentConnection) return;
+    setSchedulerReady(false);
+    if (!stopRequested) void reconnectScheduler();
+  });
   channel.on('error', (error: Error) => {
     setSchedulerReady(false);
     log.error({ error }, 'Scheduler RabbitMQ channel error');
@@ -82,11 +132,10 @@ export async function startSubmissionScheduler(): Promise<() => Promise<void>> {
     { queues: [SUBMISSION_INGRESS_QUEUE, SUBMISSION_QUEUE] },
     'Submission scheduler is ready',
   );
-
-  return stopSubmissionScheduler;
 }
 
 export async function stopSubmissionScheduler(): Promise<void> {
+  stopRequested = true;
   setSchedulerReady(false);
   const currentChannel = channel;
   if (!currentChannel) return;
