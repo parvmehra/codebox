@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildSandboxCreateArgs, normalizeOutput } from './docker-executor.js';
+import {
+  buildSandboxCreateArgs,
+  DockerCommandAbortedError,
+  normalizeOutput,
+  readPeakMemoryKb,
+  type DockerCommandRunner,
+} from './docker-executor.js';
 import { CPP_23_PROFILE, JAVA_21_PROFILE } from './language-profile.js';
 
 describe('Docker execution settings', () => {
@@ -34,5 +40,38 @@ describe('Docker execution settings', () => {
   it('compares outputs while ignoring line ending and whitespace differences', () => {
     expect(normalizeOutput('  1\t  2\r\n')).toBe('1 2');
     expect(normalizeOutput('\n  ')).toBe('');
+  });
+
+  describe('readPeakMemoryKb', () => {
+    const result = (exitCode: number, stdout: string) => ({
+      exitCode,
+      stdout,
+      stderr: '',
+      outputLimitExceeded: false,
+    });
+
+    it('converts the cgroup byte count to kilobytes', async () => {
+      const runner: DockerCommandRunner = async () => result(0, '104857600\n');
+      expect(await readPeakMemoryKb('c', undefined, runner)).toBe(102_400);
+    });
+
+    it('returns null when the host has no cgroup v2 memory.peak', async () => {
+      expect(await readPeakMemoryKb('c', undefined, async () => result(1, ''))).toBeNull();
+      expect(await readPeakMemoryKb('c', undefined, async () => result(0, 'max'))).toBeNull();
+      expect(
+        await readPeakMemoryKb('c', undefined, async () => {
+          throw new Error('docker unavailable');
+        }),
+      ).toBeNull();
+    });
+
+    it('still propagates cancellation', async () => {
+      const runner: DockerCommandRunner = async () => {
+        throw new DockerCommandAbortedError();
+      };
+      await expect(readPeakMemoryKb('c', undefined, runner)).rejects.toBeInstanceOf(
+        DockerCommandAbortedError,
+      );
+    });
   });
 });

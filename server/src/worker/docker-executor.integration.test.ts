@@ -135,6 +135,19 @@ describeDocker('sandbox (real Docker)', () => {
     expect(result.status).toBe(SubmissionStatus.ACCEPTED);
   }, 60_000);
 
+  it('reports peak memory measured by the kernel, not by the program', async () => {
+    const small = await run(py, 'print("ok")', one);
+    const big = await run(
+      py,
+      'x = bytearray(120 * 1024 * 1024)\nx[::4096] = b"1" * len(x[::4096])\nprint("ok")',
+      one,
+    );
+    expect(big.result.status).toBe(SubmissionStatus.ACCEPTED);
+    expect(big.result.memoryUsedKb).toBeGreaterThanOrEqual(120 * 1024);
+    expect(small.result.memoryUsedKb).toBeGreaterThan(0);
+    expect(small.result.memoryUsedKb!).toBeLessThan(big.result.memoryUsedKb!);
+  }, 60_000);
+
   it('runs Node.js programs', async () => {
     const { result } = await run(NODE_22_PROFILE, 'console.log("ok")', one);
     expect(result.status).toBe(SubmissionStatus.ACCEPTED);

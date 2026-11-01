@@ -280,6 +280,7 @@ export async function executeSubmission(
 
     await options.onPhase(SubmissionStatus.RUNNING);
     let totalExecutionTimeMs = 0;
+    let peakMemoryKb: number | null = null;
 
     for (const [index, testCase] of options.testCases.entries()) {
       if (index > 0) {
@@ -309,6 +310,8 @@ export async function executeSubmission(
       );
       const executionTimeMs = Math.max(0, Math.round(performance.now() - startedAt));
       totalExecutionTimeMs += executionTimeMs;
+      const peakKb = await readPeakMemoryKb(containerId, options.signal, runCommand);
+      if (peakKb !== null) peakMemoryKb = Math.max(peakMemoryKb ?? 0, peakKb);
 
       let status: TestResultStatus;
       let errorMessage: string | null = null;
@@ -348,11 +351,16 @@ export async function executeSubmission(
       });
 
       if (status !== TestResultStatus.PASSED) {
-        return completedResult(toSubmissionStatus(status), totalExecutionTimeMs, errorMessage);
+        return completedResult(
+          toSubmissionStatus(status),
+          totalExecutionTimeMs,
+          errorMessage,
+          peakMemoryKb,
+        );
       }
     }
 
-    return completedResult(SubmissionStatus.ACCEPTED, totalExecutionTimeMs, null);
+    return completedResult(SubmissionStatus.ACCEPTED, totalExecutionTimeMs, null, peakMemoryKb);
   } finally {
     try {
       const cleanup = await runCommand(['rm', '--force', containerName], { timeoutMs: 15_000 });
@@ -387,8 +395,31 @@ function completedResult(
   status: SubmissionStatus,
   executionTimeMs: number | null,
   errorMessage: string | null,
+  memoryUsedKb: number | null = null,
 ): ExecutionResult {
-  return { status, executionTimeMs, memoryUsedKb: null, errorMessage: limitMessage(errorMessage) };
+  return { status, executionTimeMs, memoryUsedKb, errorMessage: limitMessage(errorMessage) };
+}
+
+// Peak memory comes from the container's cgroup (kernel accounting), never from the submitted
+// program. The cgroup is shared with the compiler and cannot be reset without root, so for compiled
+// languages the value includes compilation. It is null on hosts without cgroup v2 memory.peak.
+export async function readPeakMemoryKb(
+  containerId: string,
+  signal: AbortSignal | undefined,
+  runCommand: DockerCommandRunner,
+): Promise<number | null> {
+  try {
+    const result = await runCommand(['exec', containerId, 'cat', '/sys/fs/cgroup/memory.peak'], {
+      timeoutMs: 5_000,
+      signal,
+    });
+    if (result.exitCode !== 0) return null;
+    const bytes = Number(result.stdout.trim());
+    return Number.isFinite(bytes) && bytes > 0 ? Math.ceil(bytes / 1024) : null;
+  } catch (error) {
+    if (error instanceof DockerCommandAbortedError) throw error;
+    return null;
+  }
 }
 
 function toSubmissionStatus(status: TestResultStatus): SubmissionStatus {
