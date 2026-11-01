@@ -89,10 +89,33 @@ async function setup() {
     body: { email, password: 'Recovery-E2E-Password-123!' },
   });
   assert.equal(registered.status, 201, JSON.stringify(registered.body));
-  const { data: problems } = (await api('/problems')).body;
-  const problem = problems.find((candidate) => candidate.slug === 'two-sum');
-  assert.ok(problem, 'seed problem two-sum is required');
-  return { token: registered.body.token, problemId: problem.id };
+  // A private single-test problem keeps this script independent of whatever data the database holds.
+  psql(`update "User" set role = 'ADMIN' where id = '${registered.body.user.id}'`);
+  const token = registered.body.token;
+  const created = await api('/problems', {
+    method: 'POST',
+    token,
+    body: {
+      slug: `recovery-e2e-${randomUUID().slice(0, 8)}`,
+      title: 'Recovery output check',
+      description: 'Print 0 1.',
+      difficulty: 'EASY',
+      constraints: 'n/a',
+      inputFormat: 'none',
+      outputFormat: 'one line',
+      examples: [],
+      isPublished: true,
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const problemId = created.body.data.id;
+  const testCase = await api(`/problems/${problemId}/test-cases`, {
+    method: 'POST',
+    token,
+    body: { input: '', expectedOut: '0 1', isHidden: false },
+  });
+  assert.equal(testCase.status, 201, JSON.stringify(testCase.body));
+  return { token, problemId };
 }
 
 const ctx = await setup();

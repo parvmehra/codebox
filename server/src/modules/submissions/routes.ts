@@ -65,8 +65,15 @@ submissionsRouter.post(
   requireAuth,
   async (request: AuthenticatedRequest, response) => {
     const input = createSubmissionInput.parse(request.body);
-    if (input.priority > 0 && request.user!.role !== Role.ADMIN) {
-      throw new HttpError(403, 'INSUFFICIENT_ROLE', 'Only admins can set submission priority.');
+    if (input.priority > 0) {
+      // Read the role from the database: the token's copy can be up to an hour old.
+      const account = await prisma.user.findUnique({
+        where: { id: request.user!.id },
+        select: { role: true },
+      });
+      if (account?.role !== Role.ADMIN) {
+        throw new HttpError(403, 'INSUFFICIENT_ROLE', 'Only admins can set submission priority.');
+      }
     }
     const problem = await prisma.problem.findFirst({
       where: { id: input.problemId, isPublished: true },
@@ -429,5 +436,9 @@ submissionsRouter.get('/:id', requireAuth, async (request: AuthenticatedRequest,
 
   if (!submission) throw new HttpError(404, 'SUBMISSION_NOT_FOUND', 'Submission not found.');
   const { executions, ...details } = submission;
-  return response.json({ data: { ...details, testResults: executions[0]?.testResults ?? [] } });
+  // `executions` carries the recorded environment (image, versions, limits, test-case versions) so a
+  // result can be tied to what produced it; it never includes test-case inputs or expected output.
+  return response.json({
+    data: { ...details, testResults: executions[0]?.testResults ?? [], executions },
+  });
 });

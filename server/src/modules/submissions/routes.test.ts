@@ -322,6 +322,23 @@ describe('submission API', () => {
     expect(publishSubmission).toHaveBeenCalledWith(submissionId, 7);
   });
 
+  it('does not let a demoted admin raise priority with an old admin token', async () => {
+    vi.mocked(prisma.problem.findFirst).mockResolvedValue({ id: problemId } as never);
+    const response = await fetch(`${baseUrl}/api/submissions`, {
+      method: 'POST',
+      headers: authHeaders('ADMIN', 'USER'),
+      body: JSON.stringify({
+        problemId,
+        language: 'JAVA',
+        sourceCode: 'class Main {}',
+        priority: 5,
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(prisma.submission.create).not.toHaveBeenCalled();
+  });
+
   it('does not let regular users raise submission priority', async () => {
     const response = await fetch(`${baseUrl}/api/submissions`, {
       method: 'POST',

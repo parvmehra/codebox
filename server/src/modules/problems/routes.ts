@@ -8,14 +8,27 @@ import { createProblemInput, testCaseInput, updateTestCaseInput } from './valida
 
 export const problemsRouter = Router();
 
+const listQuery = z.object({
+  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 problemsRouter.get('/', async (request, response) => {
-  const difficulty = z.enum(['EASY', 'MEDIUM', 'HARD']).optional().parse(request.query.difficulty);
+  const { difficulty, cursor, limit } = listQuery.parse(request.query);
   const problems = await prisma.problem.findMany({
     where: { isPublished: true, ...(difficulty ? { difficulty } : {}) },
     select: { id: true, slug: true, title: true, difficulty: true, createdAt: true },
-    orderBy: { createdAt: 'desc' },
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    take: limit + 1,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
   });
-  return response.json({ data: problems });
+  const hasMore = problems.length > limit;
+  if (hasMore) problems.pop();
+  return response.json({
+    data: problems,
+    nextCursor: hasMore ? (problems.at(-1)?.id ?? null) : null,
+  });
 });
 
 problemsRouter.get('/:id', async (request, response) => {
