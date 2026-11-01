@@ -18,6 +18,15 @@ PostgreSQL stores durable user, problem, test-case, submission, execution, and t
 
 The submission API returns all execution metadata and the latest attempt's verdicts to the owning user. Test inputs and expected outputs remain private; execution snapshots reference immutable versions instead of returning their contents.
 
+## Integrity, indexes and retention
+
+- **Deletion is deliberate.** There are no delete endpoints for users, problems or test cases. At the database level, deleting a user cascades to their submissions; deleting a problem is restricted while submissions or contest entries reference it; deleting a test case that an execution pinned is blocked because `ExecutionTestCase` restricts deletion of `TestCaseVersion`. Heartbeat history is the only data pruned automatically (7 days, hourly).
+- **Constraints.** Unique `(submissionId, attemptNumber)` stops two attempts sharing a number; unique `(executionId, testIndex)` stops duplicate results; contest positions and display names are unique per contest. These, together with the compare-and-set claim, are what made the duplicate-delivery test produce exactly one result.
+- **Indexes** were reviewed against the queries the code runs: submission history `(userId, createdAt)`, lease recovery `(status, leaseExpiresAt)`, redispatch `(status, needsDispatch, lastEnqueuedAt)`, contest standings `(contestId, status, createdAt)`, and worker freshness `(status, lastHeartbeatAt)`. This was a read-through, not an `EXPLAIN` run on a loaded database.
+- **SQL injection.** All queries go through Prisma's parameterised API; the only raw query is a constant `SELECT 1` health check.
+- **Migrations** are applied with `prisma migrate deploy` when the API container starts. None of the migrations in the repository drops data. Back up the database before upgrading a deployment that holds real data.
+- **Pagination** is bounded on the list endpoints (submissions max 50, problems max 100).
+
 ## Learning notes
 
 - **Problem solved:** source, runtime, image, and test versions remain identifiable after the worker exits, while a new run leaves the original result intact.

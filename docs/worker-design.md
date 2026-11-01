@@ -27,6 +27,13 @@ The API recovery loop finds expired leases every 15 seconds. It fences off the f
 
 A user-requested re-run is a new submission linked to its source execution. It does not reset the original status or overwrite its results. The worker uses the stored profile and test revisions and prefers the image digest (then image ID) when creating the new container. Automatic retries remain attempts of the same submission and use the normal retry budget.
 
+## Sandbox lifecycle details
+
+- **One container per attempt, reset between tests.** All test cases of an attempt share one container so the compiler runs once. Before every test after the first, the executor kills the sandbox user's processes and clears `/tmp`, so a test cannot leave files or background processes for the next (verified for all four languages).
+- **Orphaned sandboxes.** Every sandbox is labelled `codebox.worker=<worker id>`. A worker that is killed (SIGKILL, OOM, host loss) cannot remove its container, so each live worker sweeps every 30 seconds and removes sandboxes whose owner has missed its 45-second heartbeat window or is unknown. A worker never removes its own sandboxes or those of a live peer.
+- **Resource accounting.** After each test the worker reads the container's cgroup `memory.peak` (kernel accounting, not self-reported) and stores the maximum. The cgroup is shared with the compiler, so for compiled languages the value includes compilation.
+- **Lease renewal.** The 15-second heartbeat also renews the lease of every active submission against the 60-second lease. If the renewal fails because the lease was lost or the submission was cancelled, the job is aborted.
+
 ## Cancellation and shutdown
 
 The API persists a user cancellation before broadcasting a transient control message. Each worker has a short-lived control queue; the matching active job receives an `AbortSignal`. Workers also poll the database for cancelled active submissions, so the database remains authoritative if a control message is missed. The Docker CLI receives the same abort signal, stops the execution container, and cleanup removes the container in a `finally` block.

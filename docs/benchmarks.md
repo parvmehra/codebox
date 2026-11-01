@@ -4,7 +4,7 @@ These numbers describe **one machine and one synthetic workload**. They show how
 
 ## Environment
 
-- Windows 11 laptop, Docker Desktop (Engine 28.5.2, WSL2 backend), 11.5 GiB visible to Docker, load generator and all services on the same machine.
+- Windows 11 laptop, Docker Desktop (Engine 28.5.2, WSL2 backend), 20 logical CPUs and 11.5 GiB visible to Docker, load generator and all services on the same machine.
 - Only `postgres`, `rabbitmq`, `api` and `worker` were running (Prometheus, Grafana and the frontend were stopped).
 - Date: 2026-11. Commit: the one that added `scripts/benchmark.mjs`.
 

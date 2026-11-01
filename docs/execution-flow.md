@@ -25,7 +25,7 @@ The transition table is enforced by `server/src/modules/submissions/state-machin
 5. Create an execution record with a SHA-256 of the submitted source, the full language-profile snapshot, image tag, configured resource limits, and an ordered link to each test-case version.
 6. Create a fresh container and stream the source into its private `/workspace` tmpfs.
 7. Inspect the created container to record the exact Docker image ID and registry digest. Run the profile's compile or syntax-check command. C++ writes its compiled binary to a separate executable tmpfs.
-8. Run the program once per test case, passing each input through standard input.
+8. Run the program once per test case, passing each input through standard input. Before every test after the first, kill the sandbox user's processes and clear `/tmp`, so tests cannot affect each other. After each test, read the container's cgroup peak memory.
 9. Normalize line endings and whitespace before comparing output.
 10. Persist each verdict, publish test progress, and publish the final submission state; remove the container, then acknowledge the message.
 

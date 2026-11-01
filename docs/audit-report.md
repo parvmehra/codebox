@@ -166,3 +166,29 @@ Still open from F-06: tokens remain in `localStorage` (XSS-readable) and cannot 
 ## Status update: sandbox verified for all four languages
 
 `server/src/worker/docker-executor.integration.test.ts` (opt-in, `CODEBOX_DOCKER_TESTS=1`) now runs the same adversarial set for Python, Node.js, Java and C++: correct/wrong answers, compile vs runtime errors, infinite loop, memory bomb, output flood, fork bomb, no network, read-only root filesystem, non-root user, and no state leaking between test cases. All 30 tests pass on Docker Desktop (Engine 28.5.2, WSL2). Host-dependent protections (seccomp default profile, rootfs and cgroup behavior) may differ on a Linux server; rerun this suite on the deployment host. Not covered: filesystem traversal beyond the read-only root checks, kernel-level escapes (ordinary Docker isolation is not a guarantee against a hostile program; gVisor or a microVM is the documented future hardening).
+
+## Final disposition of findings
+
+| ID | Severity | Outcome | Evidence |
+|---|---|---|---|
+| F-01 Worker holds the Docker socket | High | **Accepted risk, documented.** A socket proxy would not help (it does not inspect bodies). Mitigations listed in `docs/sandbox-security.md`. | Design analysis |
+| F-02 Stranded submission window | High | **Fixed.** `needsDispatch=true` until a confirmed publish; recovery re-publishes. | `recovery-e2e` scenario E |
+| F-03 Default secrets, exposed ports | Medium | **Fixed.** `JWT_SECRET` required, ports on 127.0.0.1. Postgres/RabbitMQ/Grafana still default to `change-me` locally (documented; change them on a server). | `docker compose config` |
+| F-04 Resource usage not measured | Medium | **Fixed.** Kernel cgroup peak; limits documented. | Unit + real-Docker tests |
+| F-05 Shared container across tests | Medium | **Fixed** (confirmed first, then reset between tests). | Sandbox suite, all 4 languages |
+| F-06 Auth gaps | Medium | **Mostly fixed.** Algorithm pinned, DB-checked roles (admin routes and priority), per-account login limit, admin bootstrap. Open: `localStorage` token, no revocation, in-memory limiter, email enumeration. | Unit tests + live checks |
+| F-07 Dependency name | Medium | **Withdrawn, false positive.** `@prometheus-io/client` is the official package. | npm registry metadata |
+| F-08 Open operational endpoints | Medium | **Fixed for `/metrics`** (internal port). `/api/workers/status` remains public by design (aggregate counts only). | `correctness-e2e`, live curl |
+| F-09 Tests did not cover risky paths | Medium | **Fixed.** Five live suites plus a real-Docker suite, wired into CI (CI itself not yet run on GitHub). | See README Testing |
+| F-10 Reruns are new submissions | Low/Medium | **Accepted, documented.** Original untouched, replays recorded versions; image tag pinning noted. | `correctness-e2e` |
+| F-11 Unbounded problems list | Low | **Fixed.** `limit` max 100 with cursor. | `correctness-e2e` |
+| F-12 CI hygiene | Low | **Partly fixed.** Jobs split and all suites added. Actions still pinned by tag; no format check (20 pre-existing unformatted files). | `ci.yml` |
+| S-01 Orphaned containers after a crash | - | **Confirmed and fixed** (label + reaper). | `recovery-e2e` scenario A |
+| S-02 Lease expiry during a long run | - | **Not a defect.** The 15 s heartbeat renews active leases; a lost lease aborts the job. | Code reading (`worker/index.ts`) |
+| S-03 Output-cap behaviour | - | **Verified.** Flood is capped and the next work is unaffected. | Sandbox suite |
+| S-04 No explicit seccomp profile | - | **Open.** Docker's default profile only. | - |
+| S-05 Socket.IO reconnect | - | **Resolved by design.** UI refetches from the API on every event and reconnect. Not exercised in a browser. | Code reading |
+| S-06 Dashboard vs metrics | - | **Fixed.** All panel queries return data; a false-zero gauge query was corrected; panels added. | Live Prometheus queries |
+| S-07 Secrets in git history | - | **Clean.** No `.env`, key or certificate file ever committed; only test-only dummy secrets. | `git log` search |
+
+Additional defects found by the new suites and fixed: API scheduler never reconnected after a broker outage; submission priority trusted the token's role; the frontend returned 404 on deep links (nginx fallback missing); submission detail did not expose execution records (Phase 9 metadata).

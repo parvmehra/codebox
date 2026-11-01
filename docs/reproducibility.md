@@ -26,6 +26,12 @@ The worker resolves the current revision when a submission first runs and pins t
 
 The worker reads the source execution's profile and test-case revisions. It creates a new `Execution` under the new submission, capturing a fresh source hash and the image actually used. It prefers the saved registry digest as the image reference; if no digest was recorded, it uses the saved local image ID, with the old tag only as a legacy fallback.
 
+## Verified behavior
+
+`scripts/correctness-e2e.mjs` checks this against a live stack: after a hidden test case is edited (new version), a new submission uses the new version while a rerun of an earlier submission replays the recorded version and still passes; the rerun happens after the worker process was restarted; the original submission's status and execution records are unchanged; and the rerun records the same Docker image ID, language version and test-case versions as the original.
+
+Language profiles pin images by **tag** (for example `python:3.12.15-slim-bookworm`). The digest and image ID are captured per execution, so a result identifies the exact image it ran on, but a fresh submission after the registry republishes a tag could run on a different image. Pin by digest in the profiles if that matters. Execution time and memory are not reproducible numbers: they depend on host load.
+
 ## Limits and failure cases
 
 - A registry digest makes an image addressable after a host change. If the image has no registry digest and its local Docker image ID has been pruned, the worker cannot recreate that exact image automatically.

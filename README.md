@@ -65,9 +65,24 @@ The role is checked against the database on admin routes, so the change applies 
 
 The Compose stack also starts Prometheus at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana provisions the Codebox Operations dashboard and uses `GRAFANA_USER` / `GRAFANA_PASSWORD`; change the development defaults before sharing the host. The API exposes `/health/live` and `/health/ready` publicly and `/metrics` only on internal port 9100; the worker exposes equivalent health routes and metrics on its internal port 9101.
 
+## Testing
+
+| Suite | Command | What it proves |
+| --- | --- | --- |
+| Unit tests (103) | `npm run test --workspace=@platform/server` | State machine, validation, scoring, scheduler, retries, auth, rate limits, metrics (database and broker mocked) |
+| Sandbox tests (31, real Docker) | `CODEBOX_DOCKER_TESTS=1 npx vitest run src/worker/docker-executor.integration.test.ts` (from `server/`) | Hostile programs for Python, Node.js, Java and C++: loops, memory/fork bombs, output floods, no network, read-only root, non-root user, no state between test cases, kernel-measured memory |
+| `scripts/worker-e2e.mjs` | needs the Compose stack | A correct program per language, Socket.IO authentication and event isolation |
+| `scripts/correctness-e2e.mjs` | needs the Compose stack | Validation, hidden test cases never exposed, ownership, rerun immutability and snapshot replay, cancellation at every stage, concurrent burst without loss or duplicates |
+| `scripts/scheduler-e2e.mjs` | needs the Compose stack | FIFO vs PRIORITY ordering, language-capability matching |
+| `scripts/recovery-e2e.mjs` | needs the Compose stack (kills services) | Duplicate delivery, stranded rows, worker SIGKILL, RabbitMQ and PostgreSQL outages |
+| `scripts/observability-e2e.mjs` | needs the Compose stack | Prometheus scrapes the API and worker, Grafana is ready |
+| `scripts/benchmark.mjs` | needs the Compose stack | Throughput and latency, see [Benchmarks](docs/benchmarks.md) |
+
+The e2e suites create their own problems and accounts and restart services on purpose, so run them against a disposable local stack. Registration is limited to 5 per hour per IP and the limiter is in memory, so restart the API (`docker compose restart api`) between suites. If port 5432 is already used on your machine, set `POSTGRES_HOST_PORT=5433`.
+
 ## Continuous integration
 
-GitHub Actions runs linting, TypeScript checks, server tests, application builds, Docker image builds, a Docker-backed end-to-end submission for each supported language, and Prometheus/Grafana integration checks on pushes to `main` and pull requests.
+GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on pushes to `main` and pull requests: `verify` (lint, typecheck, unit tests, build), `sandbox` (the real-Docker adversarial suite on Linux) and `e2e` (builds the images, starts the stack, and runs every live suite above). The workflow has not yet been run on GitHub; its action versions are pinned by tag, not by commit SHA.
 
 ## Implemented endpoints
 
@@ -109,7 +124,7 @@ The worker supports Java 21, Python 3.12, C++23, and Node.js 22 through explicit
 
 ## Security note
 
-Passwords are hashed with bcrypt and protected endpoints require JWTs. Registration, login, submission, and re-run requests have per-IP rate limits; the current in-memory limits are per API process. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. The retry limit is three total execution attempts; dead-letter messages currently require operator inspection and have no replay UI. Metrics endpoints should stay on a trusted network. Redis is not implemented because the current single API process does not need a shared limit store.
+Passwords are hashed with bcrypt and protected endpoints require JWTs. Registration, login, submission, and re-run requests have per-IP rate limits; the current in-memory limits are per API process. Each language runs with no network, a read-only root filesystem, non-root UID, dropped Linux capabilities, CPU, memory, process, time, source-size, and output limits. C++ gets a separate bounded executable tmpfs for its compiled binary; source stays on a no-exec workspace mount. Docker is educational isolation, not a guarantee against hostile code. The retry limit is three total execution attempts; dead-letter messages currently require operator inspection and have no replay UI. `/metrics` is served on a separate internal port (API 9100, worker 9101) that Compose does not publish; published ports bind to `127.0.0.1`. The JWT algorithm is pinned to HS256, admin routes read the role from the database, and logins are rate limited per IP and per account. Redis is not implemented because the current single API process does not need a shared limit store.
 
 ## Learning notes
 
@@ -127,6 +142,23 @@ Passwords are hashed with bcrypt and protected endpoints require JWTs. Registrat
 - [Input validation](docs/input-validation.md)
 - [Deployment](docs/deployment.md)
 
-## Next phase
+## Verified status and known limitations
 
-Phases 5–10 are implemented: bounded retries, lease-based recovery, scheduling, observability, immutable execution provenance, test-case revisions, re-runs, timed contests, rate limits, bounded input validation, hourly worker-history cleanup, pinned CI runners, and deployment guidance. The Compose configuration remains a single-host evaluation baseline. No deployment or paid service is authorized without explicit approval.
+What has been run and observed, not just written: the sandbox against hostile programs in all four languages (on Docker Desktop with WSL2), duplicate delivery, worker SIGKILL, broker and database outages, cancellation at each stage, scheduling order and capability matching, a concurrent burst, reruns replaying recorded test-case versions, and one-vs-three-worker throughput. See [verification report](docs/verification-report.md), [failure handling](docs/failure-handling.md) and [benchmarks](docs/benchmarks.md).
+
+Known limitations, stated plainly:
+
+- **Isolation is Docker, not a VM.** A kernel or runtime vulnerability is out of scope. The worker holds the Docker socket, so a worker compromise is host-level; run workers on a dedicated host. See [sandbox security](docs/sandbox-security.md). gVisor, Sysbox or a microVM are the next step.
+- **At-least-once delivery, not exactly-once.** Duplicates are made harmless by a compare-and-set claim and a unique attempt number.
+- **A broker outage fails new submissions** with `503` after about 12 s and marks them `SYSTEM_ERROR`; the user must resubmit. Jobs already queued survive.
+- **Recovery of a killed worker takes about 75 s** (60 s lease plus the 15 s recovery sweep).
+- **Memory usage** is the container cgroup peak. For Java and C++ it includes the compiler. Execution time is wall-clock around `docker exec`, so it includes process start-up.
+- **Rate limits are in memory** and per API process; they reset on restart and are not shared across replicas. Redis is not used.
+- **JWTs live in `localStorage`** and cannot be revoked before the 1 h expiry on non-admin routes. Registration reveals whether an email exists.
+- **The Monaco editor loads from a CDN** (`@monaco-editor/react` default), so the editor needs internet access and a strict Content-Security-Policy would break it.
+- **The UI was not tested in a real browser.** The frontend build, serving, routing, CORS and headers were checked over HTTP only; there are no frontend tests.
+- **Per-job overhead dominates** (about 1.1 s for a 0.25 s program). A pool is saturated quickly; see the benchmark bottleneck notes.
+- **Results above were produced on one Windows laptop.** Rerun the sandbox and e2e suites on the deployment host.
+- Dead-lettered messages need operator inspection; there is no replay UI. Prettier reports 20 files that were unformatted before this work.
+
+Future improvements: a warm-container pool, a stronger isolation runtime, shared rate limiting, a browser-level test suite, bundling Monaco locally, and a replay tool for the dead-letter queue.

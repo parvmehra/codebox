@@ -34,3 +34,20 @@ Run date: 2026-11-01. Commit: `bc0f34f` (after the F-02 and F-05 fixes). Host: W
 - Documented setup works with the services above, but the worker takes several minutes on a cold machine to pull four language images; compose gives it a 10-minute start period.
 - Docker Desktop stopped on its own twice between sessions, so builds were restarted.
 - `wget http://localhost:9101` inside the worker container is refused while `127.0.0.1` works (IPv6 `localhost` resolution); the compose healthcheck uses `127.0.0.1`, so it is unaffected.
+
+## Later verification (after the baseline above)
+
+Run on the same Windows/Docker Desktop host, against the commits that introduced each suite. All results below were executed and passed; "not covered" lists what was not.
+
+| Suite | Result |
+|---|---|
+| Unit tests | 103 passed |
+| Sandbox, real Docker (Python, Node.js, Java, C++) | 31 passed |
+| `scripts/correctness-e2e.mjs` | 6 of 6 scenarios passed |
+| `scripts/scheduler-e2e.mjs` | 3 of 3 passed (FIFO order, PRIORITY order, capability matching) |
+| `scripts/recovery-e2e.mjs` | 6 of 6 passed (duplicate delivery, stranded row, no worker, worker SIGKILL, RabbitMQ outage, PostgreSQL outage) |
+| `scripts/benchmark.mjs` | 1 worker 0.90 jobs/s; 3 workers 2.27 jobs/s (see `docs/benchmarks.md`) |
+| Dashboard | every panel query returns data on a live Prometheus |
+| Frontend | served over HTTP with SPA fallback, CORS and security headers verified; **not tested in a browser** |
+
+Not covered: GitHub Actions (never run), a real Linux host (Docker Desktop/WSL2 only), crashes at exact points inside compile or between tests, database or broker loss while a worker is mid-run, and a browser-level UI test.
